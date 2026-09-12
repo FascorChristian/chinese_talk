@@ -1,0 +1,6 @@
+{
+  "name": "Li Ming - Tutor de Chino Mandarín",
+  "description": "Tutor conversacional interactivo inspirado en Praktika AI para practicar conversación oral en Chino Mandarín simplificado con feedback de gramática, Pinyin automático y síntesis de voz.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
