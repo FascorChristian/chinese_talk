@@ -36,11 +36,14 @@ export function initVoices(): Promise<SpeechSynthesisVoice[]> {
     if (voices.length > 0) {
       return resolve(voices);
     }
-    window.speechSynthesis.onvoiceschanged = () => {
+    const onVoicesChanged = () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
       resolve(window.speechSynthesis.getVoices());
     };
+    window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
     // Fallback timeout in case event doesn't fire
     setTimeout(() => {
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
       resolve(window.speechSynthesis.getVoices());
     }, 500);
   });
@@ -64,8 +67,8 @@ export function playMandarinTTS(
   // Cancel any ongoing speech
   window.speechSynthesis.cancel();
 
-  // Strip non-pronounceable or translation brackets if any
-  const cleanText = text.replace(/\(.*?\)/g, '').trim();
+  // Strip both ASCII and Chinese fullwidth parentheses and notes
+  const cleanText = text.replace(/[（\(].*?[）\)]/g, '').trim();
   if (!cleanText) {
     onEnd?.();
     return () => {};
@@ -88,12 +91,16 @@ export function playMandarinTTS(
   };
 
   utterance.onend = () => {
-    activeUtterance = null;
+    if (activeUtterance === utterance) {
+      activeUtterance = null;
+    }
     onEnd?.();
   };
 
   utterance.onerror = (e) => {
-    activeUtterance = null;
+    if (activeUtterance === utterance) {
+      activeUtterance = null;
+    }
     if (e.error !== 'canceled' && e.error !== 'interrupted') {
       console.warn('Speech synthesis error:', e);
       onError?.(e);
@@ -146,22 +153,39 @@ export class AudioMeter {
   private stream: MediaStream | null = null;
   private animFrame: number | null = null;
   private onVolumeChange: (volume: number) => void;
+  private isStopped: boolean = false;
 
   constructor(onVolumeChange: (volume: number) => void) {
     this.onVolumeChange = onVolumeChange;
   }
 
-  async start(): Promise<MediaStream> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+  async start(): Promise<MediaStream | null> {
+    this.isStopped = false;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (err) {
+      this.isStopped = true;
+      throw err;
+    }
+
+    // If stop() was called while awaiting getUserMedia, release tracks immediately
+    if (this.isStopped) {
+      stream.getTracks().forEach((track) => track.stop());
+      return null;
+    }
+
     this.stream = stream;
 
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return stream;
+
     this.audioCtx = new AudioContextClass();
     this.analyser = this.audioCtx.createAnalyser();
     this.analyser.fftSize = 256;
@@ -173,7 +197,9 @@ export class AudioMeter {
     const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
 
     const tick = () => {
-      if (!this.analyser) return;
+      if (this.isStopped || !this.analyser || !this.audioCtx || this.audioCtx.state === 'closed') {
+        return;
+      }
       this.analyser.getByteFrequencyData(dataArray);
       let sum = 0;
       for (let i = 0; i < dataArray.length; i++) {
@@ -190,6 +216,7 @@ export class AudioMeter {
   }
 
   stop(): void {
+    this.isStopped = true;
     if (this.animFrame) {
       cancelAnimationFrame(this.animFrame);
       this.animFrame = null;
