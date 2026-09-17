@@ -137,7 +137,8 @@ export async function handleGenerateScenario(req: Request, res: Response) {
       });
     }
 
-    const promptText = createScenarioGenerationPrompt(cleanPrompt);
+    const userProfileContext = req.body?.userProfileContext || '';
+    const promptText = createScenarioGenerationPrompt(cleanPrompt, userProfileContext);
 
     const CANDIDATE_MODELS = [
       ENV.GEMINI_MODEL,

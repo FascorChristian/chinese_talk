@@ -18,7 +18,7 @@ const CANDIDATE_MODELS = [
 
 export async function handleChat(req: Request, res: Response) {
   try {
-    const { message, scenario = 'free', history = [], objectives = [] } = req.body;
+    const { message, scenario = 'free', history = [], objectives = [], userProfileContext = '' } = req.body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Se requiere el mensaje del usuario.' });
@@ -52,7 +52,7 @@ export async function handleChat(req: Request, res: Response) {
         })))
       : '';
 
-    const systemPrompt = createChatSystemPrompt(scenario, message, objectivesJson);
+    const systemPrompt = createChatSystemPrompt(scenario, message, objectivesJson, userProfileContext);
 
     // Format safe multi-turn history
     const safeHistory = Array.isArray(history) ? history.slice(-8) : [];

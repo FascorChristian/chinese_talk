@@ -12,6 +12,7 @@ import { Header } from './components/layout/Header.js';
 import { MainMenuView } from './components/views/MainMenuView.js';
 import { ReadingView } from './components/views/ReadingView.js';
 import { ShadowingView } from './components/views/ShadowingView.js';
+import { DiagnosticView } from './components/views/DiagnosticView.js';
 import { AvatarVisualizer } from './components/conversation/AvatarVisualizer.js';
 import { ChatMessageBubble } from './components/conversation/ChatMessageBubble.js';
 import { InteractionBar } from './components/conversation/InteractionBar.js';
@@ -349,6 +350,10 @@ export default function App() {
 
       {currentMode === 'shadowing' && (
         <ShadowingView onBackToMenu={handleGoToMenu} />
+      )}
+
+      {currentMode === 'diagnostic' && (
+        <DiagnosticView onBackToMenu={handleGoToMenu} />
       )}
 
       {currentMode === 'conversation' && (

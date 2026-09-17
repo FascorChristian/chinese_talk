@@ -2,11 +2,18 @@ import {
   ChatApiResponse, 
   HintsApiResponse, 
   ReadingContent, 
+  ReadingAloudEvaluation,
+  ReadingComprehensionAnswer,
   ShadowingDialogue,
+  ShadowingTurnEvaluation,
   ScenarioId,
   Scenario,
-  DialogueObjective
+  DialogueObjective,
+  DiagnosticChallenge,
+  DiagnosticSubmission,
+  DiagnosticReport
 } from '../types/index.js';
+import { getProfilePromptContext } from './userProfileService.js';
 
 function createLocalFallbackScenario(prompt: string): Scenario {
   const clean = prompt.trim() || 'Conversación cotidiana en Beijing';
@@ -216,7 +223,7 @@ export async function generateCustomScenario(
     const response = await fetch('/api/generate-scenario', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, userProfileContext: getProfilePromptContext() }),
       signal,
     });
 
@@ -250,6 +257,7 @@ export async function sendMessageToTutor(
       message,
       scenario,
       objectives,
+      userProfileContext: getProfilePromptContext(),
       history: history.slice(-6).map((m) => ({
         sender: m.sender,
         hanzi: m.hanzi,
@@ -285,14 +293,19 @@ export async function fetchHints(
 }
 
 export async function generateReadingContent(
-  topic: string,
-  level: string = 'HSK 2-3',
+  param: string | { topic?: string; prompt?: string; level?: string; genre?: string },
+  levelDefault: string = 'HSK 2-3',
   signal?: AbortSignal
 ): Promise<ReadingContent> {
+  const rawBody = typeof param === 'string' ? { topic: param, level: levelDefault } : param;
+  const body = {
+    ...rawBody,
+    userProfileContext: getProfilePromptContext(),
+  };
   const response = await fetch('/api/generate-reading', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic, level }),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -303,14 +316,66 @@ export async function generateReadingContent(
   return response.json();
 }
 
+export async function evaluateReadingAloud(
+  data: {
+    transcribedText: string;
+    expectedText: string;
+    durationSeconds: number;
+  },
+  signal?: AbortSignal
+): Promise<ReadingAloudEvaluation> {
+  const response = await fetch('/api/evaluate-reading-aloud', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} en /api/evaluate-reading-aloud`);
+  }
+
+  return response.json();
+}
+
+export async function evaluateReadingComprehension(
+  data: {
+    questionZh: string;
+    questionEs: string;
+    expectedAnswer: string;
+    fullText: string;
+    userTranscript: string;
+  },
+  signal?: AbortSignal
+): Promise<ReadingComprehensionAnswer> {
+  const response = await fetch('/api/evaluate-comprehension', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} en /api/evaluate-comprehension`);
+  }
+
+  return response.json();
+}
+
+
 export async function generateShadowingContent(
-  topic: string,
+  param: string | { topic?: string; prompt?: string; category?: string },
   signal?: AbortSignal
 ): Promise<ShadowingDialogue> {
+  const rawBody = typeof param === 'string' ? { topic: param } : param;
+  const body = {
+    ...rawBody,
+    userProfileContext: getProfilePromptContext(),
+  };
   const response = await fetch('/api/generate-shadowing', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic }),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -320,4 +385,73 @@ export async function generateShadowingContent(
 
   return response.json();
 }
+
+export async function evaluateShadowingTurn(
+  data: {
+    transcribedText: string;
+    expectedText: string;
+    expectedPinyin: string;
+    durationSeconds: number;
+    keyPhoneticFocus?: string;
+    objectives?: DialogueObjective[];
+  },
+  signal?: AbortSignal
+): Promise<ShadowingTurnEvaluation> {
+  const response = await fetch('/api/evaluate-shadowing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} en /api/evaluate-shadowing`);
+  }
+
+  return response.json();
+}
+
+export async function generateDiagnosticChallenge(
+  modeType: 'diagnostic' | 'evaluation_challenge' = 'diagnostic',
+  currentHskLevel: string = 'HSK 2',
+  targetHskLevel: string = 'HSK 3',
+  signal?: AbortSignal
+): Promise<DiagnosticChallenge> {
+  const response = await fetch('/api/generate-diagnostic-challenge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      modeType,
+      currentHskLevel,
+      targetHskLevel,
+      userProfileContext: getProfilePromptContext(),
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} en /api/generate-diagnostic-challenge`);
+  }
+
+  return response.json();
+}
+
+export async function evaluateDiagnostic(
+  submission: DiagnosticSubmission,
+  signal?: AbortSignal
+): Promise<DiagnosticReport> {
+  const response = await fetch('/api/evaluate-diagnostic', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(submission),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} en /api/evaluate-diagnostic`);
+  }
+
+  return response.json();
+}
+
 

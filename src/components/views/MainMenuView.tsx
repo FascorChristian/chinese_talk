@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   MessageSquare, 
   BookOpen, 
@@ -8,9 +8,13 @@ import {
   ArrowRight,
   CheckCircle2,
   Globe2,
-  Mic
+  Mic,
+  Target,
+  Trophy,
+  Award
 } from 'lucide-react';
-import { AppMode } from '../../types/index.js';
+import { AppMode, UserProfile } from '../../types/index.js';
+import { getUserProfile, subscribeToProfileChanges } from '../../services/userProfileService.js';
 
 interface MainMenuViewProps {
   onSelectMode: (mode: AppMode) => void;
@@ -21,11 +25,17 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
   onSelectMode,
   isLoadingContent = false,
 }) => {
+  const [userProfile, setUserProfile] = useState<UserProfile>(getUserProfile());
+
+  useEffect(() => {
+    return subscribeToProfileChanges((updated) => setUserProfile(updated));
+  }, []);
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center max-w-5xl mx-auto px-4 py-8 sm:py-12 animate-fadeIn select-none">
       
       {/* Hero Header */}
-      <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-12">
+      <div className="text-center max-w-2xl mx-auto mb-6 sm:mb-8">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold mb-4">
           <Sparkles className="w-3.5 h-3.5 text-rose-400 animate-spin" style={{ animationDuration: '6s' }} />
           <span>Praktika Mandarín • Plataforma Oral con IA</span>
@@ -35,8 +45,37 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
           ¿Qué deseas practicar hoy?
         </h1>
         <p className="text-slate-400 text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
-          Selecciona un método de entrenamiento oral. La Inteligencia Artificial generará el contenido pedagógico en Chino Mandarín en tiempo real.
+          Selecciona un método de entrenamiento oral. La Inteligencia Artificial adapta la dificultad y vocabulario a tu nivel de HSK.
         </p>
+      </div>
+
+      {/* Level & Diagnostic Card Banner */}
+      <div className="w-full mb-8 p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/95 to-amber-950/30 border border-amber-500/30 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1.5 flex-1">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Evaluación HSK / HSKK
+            </span>
+            <span className="text-xs text-slate-300">
+              Nivel Oficial: <strong className="text-amber-400 font-bold">{userProfile.hskLevel}</strong> • <strong className="text-teal-300 font-semibold">{userProfile.hskkLevel}</strong>
+            </span>
+          </div>
+          <h3 className="text-lg sm:text-xl font-black text-slate-100 flex items-center gap-2">
+            <span>Diagnóstico Integral & Desafío de Nivel</span>
+          </h3>
+          <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
+            Evalúa tus 3 habilidades (conversación, shadowing y lectura). La IA identifica tus fortalezas y debilidades, adapta dinámicamente los prompts internos y te permite desbloquear nuevos niveles de HSK.
+          </p>
+        </div>
+
+        <button
+          onClick={() => !isLoadingContent && onSelectMode('diagnostic')}
+          className="flex-shrink-0 px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 text-xs font-black shadow-lg shadow-amber-950/40 cursor-pointer flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
+        >
+          <Target className="w-4 h-4" />
+          <span>Realizar Diagnóstico / Desafío</span>
+          <ArrowRight className="w-4 h-4" />
+        </button>
       </div>
 
       {/* 3 Main Mode Selection Cards */}

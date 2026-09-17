@@ -102,6 +102,10 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-sm sm:text-base font-semibold text-emerald-300 flex items-center gap-1.5">
                 Shadowing (跟读)
               </span>
+            ) : currentMode === 'diagnostic' ? (
+              <span className="text-sm sm:text-base font-semibold text-teal-300 flex items-center gap-1.5">
+                Diagnóstico & Evaluación HSK / HSKK
+              </span>
             ) : (
               <span className="text-sm sm:text-base font-semibold text-slate-200">
                 Menú de Entrenamiento Oral
