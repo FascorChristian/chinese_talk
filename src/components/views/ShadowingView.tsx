@@ -22,7 +22,9 @@ import {
   Target,
   RotateCcw,
   Check,
-  ChevronRight
+  ChevronRight,
+  BookmarkPlus,
+  Cloud
 } from 'lucide-react';
 import { 
   ShadowingDialogue, 
@@ -31,21 +33,32 @@ import {
   DialogueObjective 
 } from '../../types/index.js';
 import { HanziWithPinyin } from '../common/HanziWithPinyin.js';
-import { playMandarinTTS, stopMandarinTTS } from '../../utils/speechUtils.js';
+import { playMandarinTTS, stopMandarinTTS, setGlobalPlaybackRate, isMobileBrowser } from '../../utils/speechUtils.js';
 import { generateShadowingContent, evaluateShadowingTurn } from '../../services/api.js';
+import {
+  saveExerciseToCloud,
+  saveVocabularyToCloud,
+  savePracticeResultToCloud,
+} from '../../services/storageService.js';
 import { ShadowingScenarioModal } from '../modals/ShadowingScenarioModal.js';
 
 interface ShadowingViewProps {
   onBackToMenu: () => void;
   initialTopic?: string;
+  initialSavedDialogue?: ShadowingDialogue | null;
+  speechRate?: number;
+  onChangeSpeed?: (rate: number) => void;
 }
 
 export const ShadowingView: React.FC<ShadowingViewProps> = ({
   onBackToMenu,
   initialTopic = 'Planes espontáneos de fin de semana y comida en Pekín',
+  initialSavedDialogue = null,
+  speechRate: externalSpeechRate,
+  onChangeSpeed,
 }) => {
-  const [dialogue, setDialogue] = useState<ShadowingDialogue | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dialogue, setDialogue] = useState<ShadowingDialogue | null>(initialSavedDialogue);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialSavedDialogue);
   const [error, setError] = useState<string | null>(null);
 
   // Scenario modal
@@ -55,7 +68,18 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
   const [currentTurnIndex, setCurrentTurnIndex] = useState<number>(0);
   const [isPlayingModel, setIsPlayingModel] = useState<boolean>(false);
   const [isPlayingFullDialogue, setIsPlayingFullDialogue] = useState<boolean>(false);
-  const [speechRate, setSpeechRate] = useState<number>(0.85);
+  const [localSpeechRate, setLocalSpeechRate] = useState<number>(externalSpeechRate ?? 1.0);
+  const speechRate = externalSpeechRate ?? localSpeechRate;
+
+  const handleSpeedChange = (newRate: number) => {
+    setLocalSpeechRate(newRate);
+    setGlobalPlaybackRate(newRate);
+    onChangeSpeed?.(newRate);
+  };
+
+  const [savedDialogueNotice, setSavedDialogueNotice] = useState(false);
+  const [savedTurnNotice, setSavedTurnNotice] = useState(false);
+
 
   // Recording & Evaluation
   const [clickMode, setClickMode] = useState<boolean>(true);
@@ -149,19 +173,36 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
   };
 
   useEffect(() => {
-    loadDialogue(initialTopic);
+    if (initialSavedDialogue) {
+      setDialogue(initialSavedDialogue);
+      setIsLoading(false);
+    } else {
+      loadDialogue(initialTopic);
+    }
     return () => {
       stopPlayback();
       cancelShadowingRecord();
     };
-  }, []);
+  }, [initialSavedDialogue]);
 
-  // Check if dialogue is fully completed
+  // Check if dialogue is fully completed and auto-save result
   useEffect(() => {
     if (!dialogue || !dialogue.turns.length) return;
     const allDone = dialogue.turns.every((t) => completedTurns[t.id]);
-    if (allDone && dialogue.turns.length > 0) {
+    if (allDone && dialogue.turns.length > 0 && !showCompletionModal) {
       setShowCompletionModal(true);
+      const evalList = Object.values(turnEvaluations) as ShadowingTurnEvaluation[];
+      const avg =
+        evalList.length > 0
+          ? Math.round(evalList.reduce((acc, ev) => acc + ev.score, 0) / evalList.length)
+          : 85;
+      savePracticeResultToCloud({
+        mode: 'shadowing',
+        title: dialogue.title,
+        score: avg,
+        passed: avg >= 70,
+        details: `${dialogue.turns.length} turnos completados`,
+      });
     }
   }, [completedTurns, dialogue]);
 
@@ -252,8 +293,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
       recognition.lang = 'zh-CN';
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      // CRITICAL: continuous = true ensures the audio engine does NOT close when user pauses or takes a breath
-      recognition.continuous = true;
+      recognition.continuous = !isMobileBrowser();
 
       recognition.onstart = () => {
         isRecordingRef.current = true;
@@ -263,23 +303,30 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
       recognition.onresult = (event: any) => {
         let currentSessionTranscript = '';
         for (let i = 0; i < event.results.length; ++i) {
-          currentSessionTranscript += event.results[i][0].transcript;
+          const seg = (event.results[i][0]?.transcript || '').trim();
+          if (!seg) continue;
+          if (currentSessionTranscript && seg.startsWith(currentSessionTranscript)) {
+            currentSessionTranscript = seg;
+          } else if (currentSessionTranscript && currentSessionTranscript.endsWith(seg)) {
+            // Already included
+          } else {
+            currentSessionTranscript += seg;
+          }
         }
 
         const prefix = prevSessionTranscriptRef.current;
-        const full = prefix 
-          ? `${prefix} ${currentSessionTranscript}`.trim() 
-          : currentSessionTranscript.trim();
+        let full = currentSessionTranscript.trim();
+        if (prefix && !full.startsWith(prefix)) {
+          full = `${prefix} ${full}`.trim();
+        }
 
         transcriptRef.current = full;
         setLiveTranscript(full);
-        // NOTE: We do NOT stop recording here! User speaks until they decide to stop!
       };
 
       recognition.onerror = (event: any) => {
         console.warn('Speech recognition event error in shadowing:', event.error);
-        if (event.error === 'no-speech') {
-          // Normal during brief thinking or breath pause; keep recording!
+        if (event.error === 'no-speech' || event.error === 'aborted') {
           return;
         }
         if (event.error === 'not-allowed') {
@@ -289,7 +336,6 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
       };
 
       recognition.onend = () => {
-        // If the browser fires onend prematurely while user is still recording, auto-restart seamlessly
         if (isRecordingRef.current && !isFinalizedRef.current) {
           prevSessionTranscriptRef.current = transcriptRef.current;
           try {
@@ -308,7 +354,6 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
 
       recognition.start();
 
-      // Start elapsed seconds timer
       clearRecordingTimer();
       timerRef.current = setInterval(() => {
         setRecordingSeconds((sec) => sec + 1);
@@ -337,6 +382,8 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
     }
 
     const durationSeconds = Math.max(0.6, (Date.now() - recordStartTimeRef.current) / 1000);
+    // Allow mobile browser 260ms to flush the final SpeechRecognition onresult buffer
+    await new Promise((r) => setTimeout(r, 260));
     const finalTranscript = transcriptRef.current.trim();
     const turn = currentTurnRef.current || dialogue?.turns[currentTurnIndex];
 
@@ -350,6 +397,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
     setUserRecordings((prev) => ({ ...prev, [turn.id]: finalTranscript }));
     await evaluateUserTurn(turn, finalTranscript, durationSeconds);
   };
+
 
   const handleRecordButtonClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -426,7 +474,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
   // Calculate overall stats
   const totalTurnsCount = dialogue?.turns.length || 0;
   const completedTurnsCount = Object.values(completedTurns).filter(Boolean).length;
-  const evaluationValues = Object.values(turnEvaluations);
+  const evaluationValues = Object.values(turnEvaluations) as ShadowingTurnEvaluation[];
   const averageScore = evaluationValues.length > 0
     ? Math.round(evaluationValues.reduce((acc, ev) => acc + ev.score, 0) / evaluationValues.length)
     : 0;
@@ -486,12 +534,12 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
           </button>
 
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-0.5">
-            {[0.75, 0.85, 1.0].map((speed) => (
+            {[0.75, 1.0, 1.25].map((speed) => (
               <button
                 key={speed}
-                onClick={() => setSpeechRate(speed)}
+                onClick={() => handleSpeedChange(speed)}
                 className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  speechRate === speed
+                  Math.abs(speechRate - speed) < 0.02
                     ? 'bg-emerald-500 text-slate-950 font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
@@ -501,8 +549,39 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
               </button>
             ))}
           </div>
+
+          {dialogue && (
+            <button
+              onClick={async () => {
+                await saveExerciseToCloud({
+                  type: 'shadowing',
+                  title: dialogue.title,
+                  chineseTitle: dialogue.chineseTitle,
+                  level: dialogue.badge,
+                  payload: dialogue,
+                });
+                setSavedDialogueNotice(true);
+                setTimeout(() => setSavedDialogueNotice(false), 2000);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-xs font-bold transition-all cursor-pointer"
+              title="Guardar este diálogo de Shadowing en mi Cuaderno"
+            >
+              {savedDialogueNotice ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>¡Guardado en Cuaderno!</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Guardar en Cuaderno</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
+
 
       {/* Loading state */}
       {isLoading ? (
@@ -718,20 +797,49 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
                 </div>
               </div>
 
-              {completedTurns[currentTurn.id] && (
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Turno superado</span>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    await saveVocabularyToCloud({
+                      hanzi: currentTurn.hanzi,
+                      pinyin: currentTurn.pinyin,
+                      meaning: currentTurn.translation,
+                      sourceMode: `Shadowing: ${dialogue.title}`,
+                    });
+                    setSavedTurnNotice(true);
+                    setTimeout(() => setSavedTurnNotice(false), 2000);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold cursor-pointer"
+                  title="Guardar esta frase en tu vocabulario de Google Sheets / Drive"
+                >
+                  {savedTurnNotice ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Frase guardada</span>
+                    </>
+                  ) : (
+                    <>
+                      <BookmarkPlus className="w-3.5 h-3.5" />
+                      <span>Guardar frase</span>
+                    </>
+                  )}
+                </button>
+
+                {completedTurns[currentTurn.id] && (
+                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Turno superado</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Target Hanzi + Pinyin */}
-            <div className="my-6">
+            <div className="my-5 sm:my-6">
               <HanziWithPinyin
                 text={currentTurn.hanzi}
                 showPinyin={showPinyin}
-                className="text-2xl sm:text-3xl font-bold leading-relaxed text-slate-100"
+                className="text-xl sm:text-3xl font-bold leading-relaxed text-slate-100"
               />
             </div>
 
@@ -771,7 +879,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
             </div>
 
             {/* Action Buttons: Listen Model vs Shadow Record */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
               
               {/* Button 1: Escuchar modelo nativo */}
               <button
@@ -784,22 +892,19 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
                 }`}
               >
                 <Volume2 className="w-5 h-5" />
-                <span>{isPlayingModel ? 'Reproduciendo modelo...' : '1. Escuchar frase nativa'}</span>
+                <span>{isPlayingModel ? 'Reproduciendo modelo...' : `1. Escuchar frase (${speechRate}x)`}</span>
               </button>
 
               {/* Button 2: Hacer Shadowing (Grabar voz continuo) */}
               <button
                 type="button"
                 onClick={handleRecordButtonClick}
-                onMouseDown={handleRecordMouseDown}
-                onMouseUp={handleRecordMouseUp}
-                onMouseLeave={handleRecordPointerCancel}
-                onTouchStart={handleRecordMouseDown}
-                onTouchEnd={handleRecordMouseUp}
-                onTouchCancel={handleRecordPointerCancel}
+                onPointerDown={handleRecordMouseDown}
+                onPointerUp={handleRecordMouseUp}
+                onPointerCancel={handleRecordPointerCancel}
                 onContextMenu={(e) => e.preventDefault()}
                 disabled={isEvaluatingTurn}
-                className={`w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer shadow-lg select-none disabled:opacity-50 ${
+                className={`w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer shadow-lg select-none touch-manipulation disabled:opacity-50 ${
                   isRecordingUser
                     ? 'bg-gradient-to-r from-rose-600 to-red-600 text-white ring-4 ring-rose-500/40 scale-105 animate-pulse'
                     : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-emerald-950/50'
@@ -810,14 +915,14 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
                     <Square className="w-5 h-5 fill-white" />
                     <span>
                       {clickMode
-                        ? `Terminar de hablar y evaluar (${recordingSeconds}s)`
+                        ? `Terminar y evaluar (${recordingSeconds}s)`
                         : `Grabando (${recordingSeconds}s)... Suelta para evaluar`}
                     </span>
                   </>
                 ) : isEvaluatingTurn ? (
                   <>
                     <Activity className="w-5 h-5 animate-spin" />
-                    <span>Evaluando tu habla con IA...</span>
+                    <span>Evaluando pronunciación...</span>
                   </>
                 ) : (
                   <>
@@ -835,12 +940,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs mb-2">
                   <span className="text-rose-300 font-bold flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
-                    Micrófono activo sin cortes ({recordingSeconds}s)
-                  </span>
-                  <span className="text-slate-300 text-[11px] bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700">
-                    {clickMode
-                      ? '💡 Habla a tu ritmo. Haz clic en "Terminar de hablar" cuando concluyas toda la frase.'
-                      : '💡 Mantén presionado hasta terminar toda la frase.'}
+                    Micrófono activo ({recordingSeconds}s)
                   </span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 text-sm">
@@ -859,7 +959,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
               <div className="mt-5 p-4 rounded-2xl bg-slate-950 border border-emerald-500/30 flex items-center justify-center gap-3 animate-fadeIn">
                 <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-xs font-semibold text-emerald-300">
-                  La IA está evaluando tu precisión léxica, velocidad y naturalidad de pausas...
+                  Evaluando tu fonética Pinyin, homófonos, velocidad y pausas...
                 </span>
               </div>
             )}
@@ -872,7 +972,7 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
               </div>
             )}
 
-            {/* DETAILED AI EVALUATION CARD */}
+            {/* DETAILED EVALUATION CARD */}
             {currentEvaluation && !isEvaluatingTurn && (
               <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-slate-950/90 border border-slate-800 shadow-xl space-y-4 animate-fadeIn">
                 
@@ -894,18 +994,35 @@ export const ShadowingView: React.FC<ShadowingViewProps> = ({
                         {currentEvaluation.passed && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
                       </h4>
                       <p className="text-xs text-slate-400">
-                        {currentEvaluation.passed ? 'Línea aprobada para tu entrenamiento' : 'Intenta repetir para superar el 75%'}
+                        {currentEvaluation.passed ? 'Línea aprobada (tolerancia fonética Pinyin activa)' : 'Intenta repetir para superar el 70%'}
                       </p>
                     </div>
                   </div>
 
                   {userRecordings[currentTurn.id] && (
-                    <div className="text-xs text-right max-w-xs">
-                      <span className="text-[11px] text-slate-500 block">Texto captado de tu voz:</span>
-                      <strong className="text-slate-300 font-medium">"{userRecordings[currentTurn.id]}"</strong>
+                    <div className="text-xs sm:text-right max-w-xs">
+                      <span className="text-[11px] text-slate-500 block">Texto captado / normalizado:</span>
+                      <strong className="text-slate-300 font-medium">"{currentEvaluation.transcribedText || userRecordings[currentTurn.id]}"</strong>
                     </div>
                   )}
                 </div>
+
+                {/* Homophone Auto-Correction Notice */}
+                {currentEvaluation.homophoneCorrections && currentEvaluation.homophoneCorrections.length > 0 && (
+                  <div className="p-3 rounded-xl bg-sky-950/30 border border-sky-500/40 text-xs text-sky-200 flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Auto-corrección inteligente de homófonos STT:</strong> El micrófono transcribió{' '}
+                      {currentEvaluation.homophoneCorrections.map((h, idx) => (
+                        <span key={idx} className="inline-block font-mono bg-sky-900/50 px-1.5 py-0.2 rounded mx-0.5">
+                          "{h.heard}" → "{h.correctedTo}" ({h.pinyin})
+                        </span>
+                      ))}{' '}
+                      y se validó como correcto porque tu pronunciación en Pinyin fue exacta.
+                    </div>
+                  </div>
+                )}
+
 
                 {/* Speed & Pauses Gauges */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

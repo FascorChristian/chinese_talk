@@ -23,6 +23,7 @@ interface InteractionBarProps {
   hasSpeechRecognition: boolean;
   recordingSeconds: number;
   speechError: string | null;
+  liveTranscript?: string;
   hints?: Array<{ hanzi: string; pinyin: string; meaning: string }>;
   onPlayAudio?: (text: string) => void;
   showPinyin?: boolean;
@@ -37,6 +38,7 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
   onSendMessage,
   recordingSeconds,
   speechError,
+  liveTranscript = '',
   hints = [],
   onPlayAudio,
   showPinyin = true,
@@ -44,10 +46,11 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
 }) => {
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState('');
-  // 1-Clic mode is active by default
   const [clickMode, setClickMode] = useState(true);
-  // Hints panel visible by default on the main screen so the user can read while speaking
-  const [showInlineHints, setShowInlineHints] = useState(true);
+  // Collapse hints by default on small mobile screens so chat history has plenty of vertical space
+  const [showInlineHints, setShowInlineHints] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 640 : true
+  );
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -55,13 +58,6 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
       inputRef.current.focus();
     }
   }, [showTextInput]);
-
-  // Keep hints open when new hints arrive from Li Ming
-  useEffect(() => {
-    if (hints && hints.length > 0) {
-      setShowInlineHints(true);
-    }
-  }, [hints]);
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +67,7 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
     setShowTextInput(false);
   };
 
-  // 1-Click vs Push-To-Talk handlers
+  // Unified click/pointer handlers that never double-fire on mobile touchscreens
   const handleButtonClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (isProcessing) return;
@@ -85,8 +81,8 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
     }
   };
 
-  const handleMouseDown = (e: React.SyntheticEvent) => {
-    if (clickMode) return; // Handled by click in 1-clic mode
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (clickMode) return;
     e.preventDefault();
     if (isProcessing) return;
     if (!isRecording) {
@@ -94,7 +90,7 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
     }
   };
 
-  const handleMouseUp = (e: React.SyntheticEvent) => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     if (clickMode) return;
     e.preventDefault();
     if (isRecording) {
@@ -109,12 +105,25 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
   };
 
   return (
-    <footer className="sticky bottom-0 z-30 w-full border-t border-slate-800/80 bg-slate-950/95 backdrop-blur-xl px-3 sm:px-4 py-2.5 sm:py-3.5 transition-colors shadow-2xl shadow-black/80">
-      <div className="max-w-4xl mx-auto flex flex-col items-center gap-2 sm:gap-2.5">
+    <footer className="sticky bottom-0 z-30 w-full border-t border-slate-800/80 bg-slate-950/95 backdrop-blur-xl px-2.5 sm:px-4 py-2 sm:py-3 transition-colors shadow-2xl shadow-black/80">
+      <div className="max-w-4xl mx-auto flex flex-col items-center gap-1.5 sm:gap-2">
         
+        {/* Live Speech Transcript Banner while recording */}
+        {isRecording && (
+          <div className="w-full px-3 py-1.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping flex-shrink-0" />
+              <span className="truncate font-medium">
+                {liveTranscript ? `Escuchando: "${liveTranscript}"` : 'Habla ahora en chino mandarín...'}
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-rose-300 flex-shrink-0">{recordingSeconds}s</span>
+          </div>
+        )}
+
         {/* Error notification banner if any */}
         {speechError && (
-          <div className="w-full flex items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-rose-950/40 border border-rose-800/50 text-xs text-rose-300 animate-shake">
+          <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-rose-950/40 border border-rose-800/50 text-xs text-rose-300">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
               <span>{speechError}</span>
@@ -128,65 +137,54 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
           </div>
         )}
 
-        {/* INTEGRATED CONTEXTUAL HINTS PANEL (Directly in main conversation screen) */}
+        {/* INTEGRATED CONTEXTUAL HINTS PANEL (Scrollable & compact on mobile) */}
         {hints && hints.length > 0 && (
-          <div className={`w-full rounded-2xl transition-all duration-200 overflow-hidden ${
+          <div className={`w-full rounded-xl sm:rounded-2xl transition-all duration-200 overflow-hidden ${
             isRecording 
-              ? 'bg-slate-900/95 border-2 border-rose-500/70 shadow-lg shadow-rose-950/30 ring-2 ring-rose-500/20' 
-              : 'bg-slate-900/90 border border-amber-500/30 shadow-md shadow-black/30'
+              ? 'bg-slate-900/95 border border-rose-500/60 shadow-md' 
+              : 'bg-slate-900/90 border border-amber-500/30 shadow-md'
           }`}>
             {/* Header / Toggle bar */}
             <div 
               onClick={() => setShowInlineHints(!showInlineHints)}
               className="flex items-center justify-between px-3 py-1.5 bg-slate-950/60 border-b border-slate-800/60 cursor-pointer select-none"
             >
-              <div className="flex items-center gap-2 text-xs font-bold">
-                <Sparkles className={`w-3.5 h-3.5 ${isRecording ? 'text-rose-400 animate-spin' : 'text-amber-400 animate-pulse'}`} />
-                <span className={isRecording ? 'text-rose-300' : 'text-amber-300'}>
+              <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold truncate">
+                <Sparkles className={`w-3.5 h-3.5 flex-shrink-0 ${isRecording ? 'text-rose-400 animate-spin' : 'text-amber-400'}`} />
+                <span className={`truncate ${isRecording ? 'text-rose-300' : 'text-amber-300'}`}>
                   {isRecording 
-                    ? '🎙️ Grabando... Lee en voz alta cualquiera de estas opciones a tu ritmo:' 
-                    : 'Pistas contextuales de qué responder a Li Ming:'}
+                    ? 'Pistas para leer en voz alta:' 
+                    : `Pistas de respuesta (${hints.length}):`}
                 </span>
               </div>
-              <div className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200">
-                <span>{showInlineHints ? 'Ocultar' : 'Ver opciones'}</span>
+              <div className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 flex-shrink-0">
+                <span>{showInlineHints ? 'Ocultar' : 'Mostrar'}</span>
                 {showInlineHints ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
               </div>
             </div>
 
-            {/* Suggestions list */}
+            {/* Suggestions list with mobile max-height scroll */}
             {showInlineHints && (
-              <div className="p-2.5 sm:p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 animate-fadeIn">
+              <div className="p-2 sm:p-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[24vh] sm:max-h-[32vh] overflow-y-auto">
                 {hints.map((hint, idx) => (
                   <div
                     key={idx}
-                    className={`group relative p-2.5 rounded-xl border transition-all flex flex-col justify-between ${
-                      isRecording
-                        ? 'bg-slate-950/90 border-slate-800 hover:border-rose-500/50'
-                        : 'bg-slate-950/80 border-slate-800 hover:border-amber-500/40'
-                    }`}
+                    className="group relative p-2 rounded-xl border bg-slate-950/85 border-slate-800 hover:border-amber-500/40 flex flex-col justify-between"
                   >
                     <div>
-                      {/* Hanzi with Pinyin */}
-                      <div className="mb-1">
+                      <div className="mb-0.5">
                         <HanziWithPinyin
                           text={hint.hanzi}
                           showPinyin={showPinyin}
-                          className="text-sm sm:text-base font-bold text-slate-100"
+                          className="text-sm font-bold text-slate-100"
                         />
                       </div>
-                      {/* Pinyin text if showPinyin is on */}
-                      <div className="text-[11px] text-amber-400/90 font-mono mb-1">
-                        {hint.pinyin}
-                      </div>
-                      {/* Spanish Translation */}
                       <p className="text-[11px] text-slate-300 leading-snug">
                         {hint.meaning}
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-800/80">
-                      {/* Listen button */}
+                    <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-slate-800/80">
                       {onPlayAudio && (
                         <button
                           type="button"
@@ -194,15 +192,13 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
                             e.stopPropagation();
                             onPlayAudio(hint.hanzi);
                           }}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-[10px] text-amber-300 font-medium transition-colors cursor-pointer"
-                          title="Escuchar pronunciación nativa de Li Ming"
+                          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-[10px] text-amber-300 font-medium cursor-pointer"
                         >
                           <Volume2 className="w-3 h-3" />
                           <span>Escuchar</span>
                         </button>
                       )}
 
-                      {/* Quick send button */}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -211,7 +207,6 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
                         }}
                         disabled={isProcessing}
                         className="flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 font-medium cursor-pointer disabled:opacity-50"
-                        title="Enviar esta respuesta"
                       >
                         <span>Enviar frase</span>
                         <ArrowRight className="w-3 h-3" />
@@ -228,7 +223,7 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
         {showTextInput && (
           <form
             onSubmit={handleTextSubmit}
-            className="w-full flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-xl shadow-black/40 animate-fadeIn"
+            className="w-full flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-xl"
           >
             <input
               ref={inputRef}
@@ -236,14 +231,14 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
               id="manual-mandarin-input"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Escribe en chino o pinyin (ej: 你好, 我想练习点餐)..."
-              className="flex-1 bg-transparent px-3 py-2 text-sm sm:text-base text-slate-100 placeholder-slate-500 focus:outline-none"
+              placeholder="Escribe en chino (ej: 你好)..."
+              className="flex-1 min-w-0 bg-transparent px-2.5 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
               disabled={isProcessing}
             />
             <button
               type="submit"
               disabled={!textInput.trim() || isProcessing}
-              className="flex items-center justify-center p-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:hover:bg-rose-600 text-white transition-all cursor-pointer"
+              className="flex items-center justify-center p-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white cursor-pointer"
               title="Enviar respuesta"
             >
               <Send className="w-4 h-4" />
@@ -251,51 +246,45 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
             <button
               type="button"
               onClick={() => setShowTextInput(false)}
-              className="px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200 font-medium cursor-pointer"
+              className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200 font-medium cursor-pointer"
             >
-              Cancelar
+              Cerrar
             </button>
           </form>
         )}
 
         {/* Main Controls Row */}
-        <div className="w-full flex items-center justify-between gap-3 sm:gap-6">
+        <div className="w-full flex items-center justify-between gap-2 sm:gap-6">
           
-          {/* Left Side: Hints Toggle / Keyboard Button */}
-          <div className="flex-1 flex justify-start items-center gap-2">
+          {/* Left Side: Hints Toggle & Keyboard Button */}
+          <div className="flex-1 flex justify-start items-center gap-1.5 sm:gap-2">
             {hints && hints.length > 0 ? (
               <button
                 type="button"
                 onClick={() => setShowInlineHints(!showInlineHints)}
                 disabled={isProcessing}
-                className="group flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-amber-950/30 border border-slate-800 hover:border-amber-700/50 text-slate-300 hover:text-amber-300 transition-all shadow-md shadow-black/20 cursor-pointer disabled:opacity-50"
-                title="Mostrar u ocultar las sugerencias en pantalla"
+                className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-900/90 hover:bg-amber-950/30 border border-slate-800 text-slate-300 hover:text-amber-300 transition-all cursor-pointer disabled:opacity-50"
+                title="Mostrar u ocultar pistas"
               >
-                <div className="w-6 h-6 rounded-lg bg-amber-500/10 group-hover:bg-amber-500/20 flex items-center justify-center text-amber-400 transition-colors">
-                  <Lightbulb className="w-3.5 h-3.5" />
-                </div>
-                <div className="text-left hidden sm:block">
-                  <div className="text-xs font-bold leading-tight">{showInlineHints ? 'Ocultar pistas' : 'Ver pistas'}</div>
-                  <div className="text-[10px] text-slate-400 leading-tight">En pantalla</div>
-                </div>
+                <Lightbulb className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-bold">{showInlineHints ? 'Ocultar' : 'Pistas'}</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onOpenHints}
                 disabled={isProcessing}
-                className="group flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-amber-950/30 border border-slate-800 hover:border-amber-700/50 text-slate-300 hover:text-amber-300 transition-all cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-300 cursor-pointer disabled:opacity-50"
               >
                 <Lightbulb className="w-4 h-4 text-amber-400" />
-                <span className="text-xs font-bold hidden sm:inline">Pistas</span>
+                <span className="text-xs font-bold">Pistas</span>
               </button>
             )}
 
-            {/* Manual text write toggle */}
             <button
               type="button"
               onClick={() => setShowTextInput(!showTextInput)}
-              className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+              className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
               title="Escribir con teclado"
             >
               <Keyboard className="w-4 h-4" />
@@ -305,68 +294,48 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
           {/* Center: Push To Talk / 1-Click Button */}
           <div className="flex flex-col items-center">
             <div className="relative flex items-center justify-center">
-              
               {isRecording && (
-                <>
-                  <span className="absolute -inset-3 rounded-full bg-rose-500/30 animate-ping duration-1000" />
-                  <span className="absolute -inset-6 rounded-full bg-rose-600/15 animate-pulse" />
-                </>
+                <span className="absolute -inset-2 rounded-full bg-rose-500/30 animate-ping duration-1000" />
               )}
 
               <button
                 id="push-to-talk-btn"
                 type="button"
                 onClick={handleButtonClick}
-                onMouseDown={handleMouseDown}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handlePointerCancel}
-                onTouchStart={handleMouseDown}
-                onTouchEnd={handleMouseUp}
-                onTouchCancel={handlePointerCancel}
+                onPointerDown={handlePointerDown}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
                 onContextMenu={(e) => e.preventDefault()}
                 disabled={isProcessing}
-                className={`relative z-10 flex flex-col items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full select-none cursor-pointer transition-all duration-200 ${
+                className={`relative z-10 flex flex-col items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-full select-none touch-manipulation cursor-pointer transition-all duration-200 ${
                   isRecording
                     ? 'bg-gradient-to-tr from-rose-600 to-red-500 scale-105 shadow-xl shadow-rose-600/50 ring-4 ring-rose-400/60'
                     : isProcessing
                     ? 'bg-slate-800 opacity-60 cursor-not-allowed'
-                    : 'bg-gradient-to-tr from-rose-600 via-rose-500 to-amber-500 hover:scale-105 hover:shadow-xl hover:shadow-rose-600/30 shadow-lg shadow-rose-950 active:scale-95'
+                    : 'bg-gradient-to-tr from-rose-600 via-rose-500 to-amber-500 hover:scale-105 shadow-lg shadow-rose-950 active:scale-95'
                 }`}
-                title={
-                  clickMode
-                    ? (isRecording ? 'Clic para enviar audio' : 'Clic para hablar (graba continuo hasta que vuelvas a hacer clic)')
-                    : 'Mantén presionado para hablar en chino'
-                }
               >
                 {isRecording ? (
-                  <Square className="w-6 h-6 sm:w-7 sm:h-7 text-white fill-white animate-pulse" />
+                  <Square className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-white animate-pulse" />
                 ) : (
-                  <Mic className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+                  <Mic className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
                 )}
               </button>
             </div>
 
-            {/* Instruction / Timer Text */}
-            <div className="mt-1.5 flex items-center gap-1.5 text-center">
+            <div className="mt-1 flex items-center gap-1 text-center">
               {isRecording ? (
-                <span className="text-xs font-bold text-rose-400 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                  {clickMode
-                    ? `Grabando (${recordingSeconds}s) • Clic para terminar y enviar`
-                    : `Grabando (${recordingSeconds}s) • Suelta para enviar`}
+                <span className="text-[11px] font-bold text-rose-400">
+                  {clickMode ? 'Toca para enviar' : 'Suelta para enviar'}
                 </span>
               ) : isProcessing ? (
-                <span className="text-xs text-amber-400 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  Li Ming está pensando...
-                </span>
+                <span className="text-[11px] text-amber-400">Evaluando...</span>
               ) : (
-                <span className="text-[11px] text-slate-400 font-medium">
-                  {clickMode ? '1 Clic para hablar • 1 Clic para enviar' : 'Mantén presionado para hablar'}
+                <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">
+                  {clickMode ? 'Toca para hablar' : 'Mantén para hablar'}
                 </span>
               )}
             </div>
-
           </div>
 
           {/* Right Side: Mode Switcher (1-Click vs Hold) */}
@@ -375,16 +344,11 @@ export const InteractionBar: React.FC<InteractionBarProps> = ({
               id="btn-click-mode-toggle"
               type="button"
               onClick={() => setClickMode(!clickMode)}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
                 clickMode
-                  ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 hover:bg-rose-500/25'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                  ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                  : 'bg-slate-900 border-slate-800 text-slate-400'
               }`}
-              title={
-                clickMode
-                  ? 'Modo 1-Clic: Clic para empezar a hablar y clic de nuevo para enviar'
-                  : 'Modo Mantener: Presiona para hablar y suelta para enviar'
-              }
             >
               <span className="hidden sm:inline">Modo: </span>
               <span>{clickMode ? '1-Clic' : 'Mantener'}</span>

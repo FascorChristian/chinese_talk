@@ -1,6 +1,7 @@
 export type TutorState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-export type AppMode = 'menu' | 'conversation' | 'reading' | 'shadowing' | 'diagnostic';
+export type AppMode = 'menu' | 'conversation' | 'reading' | 'shadowing' | 'diagnostic' | 'notebook';
+
 
 export interface SuggestedReply {
   hanzi: string;
@@ -102,6 +103,7 @@ export interface ReadingAloudEvaluation {
     explanation: string;
   }>;
   pronunciationAdvice: string;
+  homophoneCorrections?: Array<{ heard: string; correctedTo: string; pinyin: string }>;
 }
 
 export interface ReadingOverallEvaluation {
@@ -163,6 +165,7 @@ export interface ShadowingTurnEvaluation {
   pronunciationFeedback: string;
   generalAdvice: string;
   completedObjectives?: string[];
+  homophoneCorrections?: Array<{ heard: string; correctedTo: string; pinyin: string }>;
 }
 
 export interface ShadowingTurn {
@@ -313,3 +316,47 @@ export interface DiagnosticReport {
   detailedAnalysis: string;
   challengeResultSummary?: string;
 }
+
+// ==========================================
+// GOOGLE SHEETS & GOOGLE DRIVE STORAGE TYPES
+// ==========================================
+export interface SavedExercise {
+  id: string;
+  type: 'conversation' | 'shadowing' | 'reading';
+  title: string;
+  chineseTitle?: string;
+  level?: string;
+  createdAt: string;
+  payload: any;
+}
+
+export interface SavedVocabularyItem {
+  id: string;
+  hanzi: string;
+  pinyin: string;
+  meaning: string;
+  exampleHanzi?: string;
+  sourceMode?: string;
+  createdAt: string;
+}
+
+export interface SavedPracticeResult {
+  id: string;
+  mode: 'conversation' | 'shadowing' | 'reading' | 'diagnostic';
+  title: string;
+  score: number;
+  passed: boolean;
+  hskLevel?: string;
+  details?: string;
+  createdAt: string;
+}
+
+export interface UserCloudStore {
+  updatedAt: string;
+  googleScriptWebhookUrl?: string;
+  googleScriptToken?: string;
+  exercises: SavedExercise[];
+  vocabulary: SavedVocabularyItem[];
+  results: SavedPracticeResult[];
+}
+

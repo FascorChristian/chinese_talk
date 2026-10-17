@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
-import { getGenAI } from '../config/gemini.js';
-import { ENV } from '../config/env.js';
+import { generateGeminiJson } from '../config/gemini.js';
 import { 
   createDiagnosticChallengePrompt, 
   DIAGNOSTIC_CHALLENGE_SCHEMA,
@@ -199,11 +198,6 @@ export async function handleGenerateDiagnosticChallenge(req: Request, res: Respo
       userProfileContext = ''
     } = req.body;
 
-    const ai = getGenAI();
-    if (!ai) {
-      return res.json(getFallbackChallenge(modeType, currentHskLevel, targetHskLevel));
-    }
-
     const prompt = createDiagnosticChallengePrompt({
       modeType,
       currentHskLevel,
@@ -211,43 +205,21 @@ export async function handleGenerateDiagnosticChallenge(req: Request, res: Respo
       userProfileContext
     });
 
-    const candidateModels = [
-      ENV.GEMINI_MODEL,
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro'
-    ];
+    const result = await generateGeminiJson<any>({
+      cacheScope: `diag-challenge:${modeType}:${currentHskLevel}:${targetHskLevel}`,
+      contents: prompt,
+      responseSchema: DIAGNOSTIC_CHALLENGE_SCHEMA,
+      ttlMs: 1000 * 60 * 30,
+    });
 
-    let lastError: any = null;
-
-    for (const modelName of candidateModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: DIAGNOSTIC_CHALLENGE_SCHEMA,
-          }
-        });
-
-        const text = response.text?.trim();
-        if (text) {
-          const parsed = JSON.parse(text);
-          if (parsed && parsed.conversationTask && parsed.shadowingTask && parsed.readingTask) {
-            parsed.id = parsed.id || `diag-${Date.now()}`;
-            parsed.modeType = modeType;
-            parsed.targetHskLevel = modeType === 'evaluation_challenge' ? targetHskLevel : currentHskLevel;
-            return res.json(parsed);
-          }
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn(`handleGenerateDiagnosticChallenge with ${modelName} failed, trying next:`, err);
-      }
+    if (result && result.data && result.data.conversationTask && result.data.shadowingTask && result.data.readingTask) {
+      const parsed = result.data;
+      parsed.id = parsed.id || `diag-${Date.now()}`;
+      parsed.modeType = modeType;
+      parsed.targetHskLevel = modeType === 'evaluation_challenge' ? targetHskLevel : currentHskLevel;
+      return res.json(parsed);
     }
 
-    console.error('All candidate models failed for diagnostic challenge:', lastError);
     return res.json(getFallbackChallenge(modeType, currentHskLevel, targetHskLevel));
   } catch (err: any) {
     console.error('Fatal error generating diagnostic challenge:', err);
@@ -258,48 +230,19 @@ export async function handleGenerateDiagnosticChallenge(req: Request, res: Respo
 export async function handleEvaluateDiagnostic(req: Request, res: Response) {
   try {
     const submission = req.body || {};
-
-    const ai = getGenAI();
-    if (!ai) {
-      return res.json(calculateFallbackReport(submission));
-    }
-
     const prompt = createDiagnosticReportPrompt(submission);
 
-    const candidateModels = [
-      ENV.GEMINI_MODEL,
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro'
-    ];
+    const result = await generateGeminiJson<any>({
+      cacheScope: `diag-eval:${JSON.stringify(submission).slice(0, 120)}`,
+      contents: prompt,
+      responseSchema: DIAGNOSTIC_REPORT_SCHEMA,
+      ttlMs: 1000 * 60 * 15,
+    });
 
-    let lastError: any = null;
-
-    for (const modelName of candidateModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: DIAGNOSTIC_REPORT_SCHEMA,
-          }
-        });
-
-        const text = response.text?.trim();
-        if (text) {
-          const parsed = JSON.parse(text);
-          if (parsed && typeof parsed.overallScore === 'number' && parsed.assignedHskLevel) {
-            return res.json(parsed);
-          }
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn(`handleEvaluateDiagnostic with ${modelName} failed, trying next:`, err);
-      }
+    if (result && result.data && typeof result.data.overallScore === 'number' && result.data.assignedHskLevel) {
+      return res.json(result.data);
     }
 
-    console.error('All candidate models failed for diagnostic report evaluation:', lastError);
     return res.json(calculateFallbackReport(submission));
   } catch (err: any) {
     console.error('Fatal error evaluating diagnostic report:', err);

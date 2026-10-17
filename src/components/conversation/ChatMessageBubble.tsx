@@ -7,10 +7,13 @@ import {
   CheckCircle2, 
   AlertCircle,
   Copy,
-  Check
+  Check,
+  BookmarkPlus
 } from 'lucide-react';
 import { ChatMessage } from '../../types/index.js';
 import { HanziWithPinyin } from '../common/HanziWithPinyin.js';
+import { saveVocabularyToCloud } from '../../services/storageService.js';
+import { toPinyinDisplay } from '../../utils/pinyinUtils.js';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -30,6 +33,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const isAssistant = message.sender === 'assistant';
   const [isTranslationExpanded, setIsTranslationExpanded] = useState<boolean>(showTranslation);
   const [copied, setCopied] = useState(false);
+  const [savedToCloud, setSavedToCloud] = useState(false);
+  const [savedNativeAlt, setSavedNativeAlt] = useState(false);
 
   React.useEffect(() => {
     setIsTranslationExpanded(showTranslation);
@@ -41,19 +46,35 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleSavePhrase = async (hanzi: string, meaning: string, isNativeAlt = false) => {
+    await saveVocabularyToCloud({
+      hanzi,
+      pinyin: toPinyinDisplay(hanzi),
+      meaning: meaning || 'Frase de conversación con Li Ming',
+      sourceMode: 'Conversación IA',
+    });
+    if (isNativeAlt) {
+      setSavedNativeAlt(true);
+      setTimeout(() => setSavedNativeAlt(false), 2000);
+    } else {
+      setSavedToCloud(true);
+      setTimeout(() => setSavedToCloud(false), 2000);
+    }
+  };
+
   if (isAssistant) {
     return (
-      <div className="flex items-start gap-3 w-full max-w-3xl mr-auto mb-4 animate-fadeIn">
+      <div className="flex items-start gap-2.5 sm:gap-3 w-full max-w-3xl mr-auto mb-3 sm:mb-4 animate-fadeIn">
         {/* Assistant Avatar Icon */}
-        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-rose-600 to-amber-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-rose-950/50 mt-1">
+        <div className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-rose-600 to-amber-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-rose-950/50 mt-1">
           <span>李</span>
         </div>
 
         {/* Assistant Bubble Content */}
-        <div className="flex-1 bg-slate-900/90 border border-slate-800/90 rounded-2xl rounded-tl-sm p-4 sm:p-5 shadow-lg shadow-black/20 text-slate-100">
+        <div className="flex-1 min-w-0 bg-slate-900/90 border border-slate-800/90 rounded-2xl rounded-tl-sm p-3 sm:p-5 shadow-lg shadow-black/20 text-slate-100">
           
           {/* Header of Bubble */}
-          <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-800/60 text-xs text-slate-400">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60 text-xs text-slate-400 gap-2">
             <div className="flex items-center gap-1.5 font-medium">
               <span className="text-rose-400 font-semibold">Li Ming</span>
               <span className="text-[10px] text-slate-500">• Tutor</span>
@@ -64,7 +85,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               <button
                 id={`play-audio-${message.id}`}
                 onClick={() => onPlayAudio(message.hanzi)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                   isCurrentlyPlaying
                     ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
                     : 'bg-slate-800 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-slate-700/60'
@@ -72,7 +93,20 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                 title="Escuchar pronunciación nativa"
               >
                 <Volume2 className={`w-3.5 h-3.5 ${isCurrentlyPlaying ? 'text-emerald-400' : 'text-slate-400'}`} />
-                <span>{isCurrentlyPlaying ? 'Reproduciendo...' : 'Escuchar'}</span>
+                <span>{isCurrentlyPlaying ? 'Sonando...' : 'Escuchar'}</span>
+              </button>
+
+              {/* Save to Drive / Notebook Button */}
+              <button
+                onClick={() => handleSavePhrase(message.hanzi, message.translation || '')}
+                className="p-1 rounded-md text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Guardar frase en Mi Cuaderno / Google Sheets"
+              >
+                {savedToCloud ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <BookmarkPlus className="w-3.5 h-3.5" />
+                )}
               </button>
 
               {/* Copy Hanzi Button */}
@@ -91,13 +125,13 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             <HanziWithPinyin
               text={message.hanzi}
               showPinyin={showPinyin}
-              className="text-lg sm:text-xl md:text-2xl font-normal"
+              className="text-base sm:text-xl md:text-2xl font-normal"
             />
           </div>
 
           {/* Translation Dropdown */}
           {message.translation && (
-            <div className="mt-3 pt-2.5 border-t border-slate-800/60">
+            <div className="mt-2.5 pt-2 border-t border-slate-800/60">
               <button
                 onClick={() => setIsTranslationExpanded(!isTranslationExpanded)}
                 className="flex items-center justify-between w-full text-left text-xs font-medium text-slate-400 hover:text-amber-300 transition-colors cursor-pointer py-0.5"
@@ -114,7 +148,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </button>
 
               {isTranslationExpanded && (
-                <p className="mt-1.5 text-sm sm:text-base text-amber-200/90 leading-relaxed pl-1 italic font-sans">
+                <p className="mt-1.5 text-xs sm:text-sm text-amber-200/90 leading-relaxed pl-1 italic font-sans">
                   "{message.translation}"
                 </p>
               )}
@@ -128,8 +162,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
   // User Message
   return (
-    <div className="flex items-start justify-end gap-3 w-full max-w-3xl ml-auto mb-4 animate-fadeIn">
-      <div className="flex-1 max-w-2xl bg-gradient-to-br from-rose-950/40 via-slate-900 to-slate-900 border border-rose-800/40 rounded-2xl rounded-tr-sm p-4 sm:p-5 shadow-lg shadow-black/20 text-slate-100">
+    <div className="flex items-start justify-end gap-2.5 sm:gap-3 w-full max-w-3xl ml-auto mb-3 sm:mb-4 animate-fadeIn">
+      <div className="flex-1 min-w-0 max-w-2xl bg-gradient-to-br from-rose-950/40 via-slate-900 to-slate-900 border border-rose-800/40 rounded-2xl rounded-tr-sm p-3 sm:p-5 shadow-lg shadow-black/20 text-slate-100">
         
         {/* Header */}
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60 text-xs text-slate-400">
@@ -152,13 +186,13 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           <HanziWithPinyin
             text={message.hanzi}
             showPinyin={showPinyin}
-            className="text-lg sm:text-xl font-medium text-rose-100"
+            className="text-base sm:text-xl font-medium text-rose-100"
           />
         </div>
 
         {/* Feedback Section */}
         {(message.userCorrection || message.nativeAlternative) && (
-          <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-2.5">
+          <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-2">
             
             {message.userCorrection ? (
               <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-800/40 text-xs text-amber-200/90 leading-relaxed">
@@ -177,20 +211,31 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
             {message.nativeAlternative && (
               <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs leading-relaxed">
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between flex-wrap gap-1 mb-1.5">
                   <span className="flex items-center gap-1.5 font-semibold text-rose-300">
                     <Sparkles className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
-                    <span>Cómo lo diría un nativo (Pekín):</span>
+                    <span>Cómo lo diría un nativo:</span>
                   </span>
 
-                  <button
-                    onClick={() => onPlayAudio(message.nativeAlternative!)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-300 text-[11px] font-medium transition-colors cursor-pointer"
-                    title="Escuchar cómo lo pronuncia un nativo"
-                  >
-                    <Volume2 className="w-3 h-3 text-rose-400" />
-                    <span>Escuchar versión nativa</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleSavePhrase(message.nativeAlternative!, `Alternativa nativa para: ${message.hanzi}`, true)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-sky-300 text-[11px] font-medium cursor-pointer"
+                      title="Guardar expresión nativa en Cuaderno / Drive"
+                    >
+                      {savedNativeAlt ? <Check className="w-3 h-3 text-emerald-400" /> : <BookmarkPlus className="w-3 h-3" />}
+                      <span>{savedNativeAlt ? 'Guardado' : 'Guardar'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => onPlayAudio(message.nativeAlternative!)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-300 text-[11px] font-medium transition-colors cursor-pointer"
+                      title="Escuchar cómo lo pronuncia un nativo"
+                    >
+                      <Volume2 className="w-3 h-3 text-rose-400" />
+                      <span>Escuchar</span>
+                    </button>
+                  </div>
                 </div>
                 
                 <p className="text-slate-200 font-medium text-sm pl-1">
@@ -205,10 +250,9 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       </div>
 
       {/* User Avatar */}
-      <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs shadow-md mt-1">
+      <div className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs shadow-md mt-1">
         <span>我</span>
       </div>
     </div>
   );
 };
-

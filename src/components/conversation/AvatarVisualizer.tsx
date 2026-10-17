@@ -124,118 +124,116 @@ export const AvatarVisualizer: React.FC<AvatarVisualizerProps> = ({
   };
 
   return (
-    <div className="relative flex flex-col items-center justify-center pt-2 pb-1 px-4 select-none">
+    <div className="relative flex flex-row sm:flex-col items-center justify-between sm:justify-center gap-3 sm:gap-0 pt-1.5 pb-1.5 sm:pt-2 sm:pb-1 px-3 sm:px-4 select-none">
       
-      {/* Outer Glow Halo according to state */}
-      <div className="relative group cursor-pointer" onClick={onClickAvatar} title="Tutor Li Ming (Haz clic para escuchar o pausar)">
-        
-        {/* Ambient background blur */}
-        <div
-          className={`absolute -inset-4 rounded-full transition-all duration-700 blur-2xl opacity-60 ${
-            state === 'listening'
-              ? 'bg-rose-600/40 scale-110'
-              : state === 'speaking'
-              ? 'bg-emerald-600/40 scale-105'
-              : state === 'thinking'
-              ? 'bg-amber-500/40 rotate-180 scale-105'
-              : 'bg-rose-950/20 scale-95'
-          }`}
-        />
+      {/* Left/Center: Avatar Orb */}
+      <div className="flex items-center gap-3 sm:flex-col sm:gap-0">
+        <div className="relative group cursor-pointer flex-shrink-0" onClick={onClickAvatar} title="Tutor Li Ming (Haz clic para escuchar o pausar)">
+          
+          {/* Ambient background blur */}
+          <div
+            className={`absolute -inset-2 sm:-inset-4 rounded-full transition-all duration-700 blur-xl sm:blur-2xl opacity-60 ${
+              state === 'listening'
+                ? 'bg-rose-600/40 scale-110'
+                : state === 'speaking'
+                ? 'bg-emerald-600/40 scale-105'
+                : state === 'thinking'
+                ? 'bg-amber-500/40 rotate-180 scale-105'
+                : 'bg-rose-950/20 scale-95'
+            }`}
+          />
 
-        {/* Pulsing circular ripples when listening */}
-        {state === 'listening' && (
-          <>
-            <span className="absolute -inset-3 rounded-full border-2 border-rose-500/40 animate-ping" />
-            <span className="absolute -inset-6 rounded-full border border-rose-400/20 animate-pulse" />
-          </>
-        )}
+          {/* Pulsing circular ripples when listening */}
+          {state === 'listening' && (
+            <>
+              <span className="absolute -inset-1.5 sm:-inset-3 rounded-full border-2 border-rose-500/40 animate-ping" />
+              <span className="hidden sm:block absolute -inset-6 rounded-full border border-rose-400/20 animate-pulse" />
+            </>
+          )}
 
-        {/* Orbit ring when thinking */}
-        {state === 'thinking' && (
-          <div className="absolute -inset-2.5 rounded-full border-2 border-dashed border-amber-400/60 animate-spin" style={{ animationDuration: '4s' }} />
-        )}
+          {/* Orbit ring when thinking */}
+          {state === 'thinking' && (
+            <div className="absolute -inset-1.5 sm:-inset-2.5 rounded-full border-2 border-dashed border-amber-400/60 animate-spin" style={{ animationDuration: '4s' }} />
+          )}
 
-        {/* Main Circular Sphere / Avatar */}
-        <div
-          id="tutor-avatar-orb"
-          className={`relative w-24 h-24 sm:w-28 sm:h-28 rounded-full flex items-center justify-center p-1 transition-all duration-500 ${
-            state === 'listening'
-              ? 'ring-4 ring-rose-500/50 shadow-lg shadow-rose-600/40'
-              : state === 'speaking'
-              ? 'ring-4 ring-emerald-500/50 shadow-lg shadow-emerald-600/40'
-              : state === 'thinking'
-              ? 'ring-4 ring-amber-500/50 shadow-lg shadow-amber-600/40'
-              : 'ring-2 ring-slate-800 shadow-md shadow-slate-950'
-          }`}
-        >
-          {/* Inner Gradient Core with Face / Character Silhouette */}
-          <div className="w-full h-full rounded-full bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-slate-700/50 flex flex-col items-center justify-center overflow-hidden relative">
-            
-            {/* Soft inner lighting */}
-            <div className="absolute inset-0 bg-radial from-rose-500/10 via-transparent to-transparent opacity-80" />
+          {/* Main Circular Sphere / Avatar */}
+          <div
+            id="tutor-avatar-orb"
+            className={`relative w-12 h-12 sm:w-24 sm:h-24 rounded-full flex items-center justify-center p-0.5 sm:p-1 transition-all duration-500 ${
+              state === 'listening'
+                ? 'ring-2 sm:ring-4 ring-rose-500/50 shadow-lg shadow-rose-600/40'
+                : state === 'speaking'
+                ? 'ring-2 sm:ring-4 ring-emerald-500/50 shadow-lg shadow-emerald-600/40'
+                : state === 'thinking'
+                ? 'ring-2 sm:ring-4 ring-amber-500/50 shadow-lg shadow-amber-600/40'
+                : 'ring-2 ring-slate-800 shadow-md shadow-slate-950'
+            }`}
+          >
+            {/* Inner Gradient Core with Face / Character Silhouette */}
+            <div className="w-full h-full rounded-full bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-slate-700/50 flex flex-col items-center justify-center overflow-hidden relative">
+              <div className="absolute inset-0 bg-radial from-rose-500/10 via-transparent to-transparent opacity-80" />
 
-            {/* Stylized Avatar Visual: Expressive Eyes & Stylized Character */}
-            <div className="relative z-10 flex flex-col items-center">
-              {/* Eyes */}
-              <div className="flex items-center gap-4 mb-2">
-                <div
-                  className={`w-2 h-2.5 rounded-full transition-all duration-300 ${
-                    state === 'listening'
-                      ? 'bg-rose-400 scale-y-125'
-                      : state === 'thinking'
-                      ? 'bg-amber-300 translate-x-0.5'
-                      : state === 'speaking'
-                      ? 'bg-emerald-300 scale-110'
-                      : 'bg-slate-300'
-                  }`}
-                />
-                <div
-                  className={`w-2 h-2.5 rounded-full transition-all duration-300 ${
-                    state === 'listening'
-                      ? 'bg-rose-400 scale-y-125'
-                      : state === 'thinking'
-                      ? 'bg-amber-300 translate-x-0.5'
-                      : state === 'speaking'
-                      ? 'bg-emerald-300 scale-110'
-                      : 'bg-slate-300'
-                  }`}
-                />
+              <div className="relative z-10 flex flex-col items-center">
+                {/* Eyes */}
+                <div className="flex items-center gap-2 sm:gap-4 mb-0.5 sm:mb-2">
+                  <div
+                    className={`w-1.5 h-2 sm:w-2 sm:h-2.5 rounded-full transition-all duration-300 ${
+                      state === 'listening'
+                        ? 'bg-rose-400 scale-y-125'
+                        : state === 'thinking'
+                        ? 'bg-amber-300 translate-x-0.5'
+                        : state === 'speaking'
+                        ? 'bg-emerald-300 scale-110'
+                        : 'bg-slate-300'
+                    }`}
+                  />
+                  <div
+                    className={`w-1.5 h-2 sm:w-2 sm:h-2.5 rounded-full transition-all duration-300 ${
+                      state === 'listening'
+                        ? 'bg-rose-400 scale-y-125'
+                        : state === 'thinking'
+                        ? 'bg-amber-300 translate-x-0.5'
+                        : state === 'speaking'
+                        ? 'bg-emerald-300 scale-110'
+                        : 'bg-slate-300'
+                    }`}
+                  />
+                </div>
+
+                {/* Chinese Name Stamp */}
+                <div className="flex items-center justify-center px-1.5 sm:px-2 py-0.5 rounded-full bg-slate-900/90 border border-slate-700/70 text-[9px] sm:text-[11px] font-bold text-slate-200 tracking-wider">
+                  <span className="text-rose-400 sm:mr-1">李明</span>
+                  <span className="hidden sm:inline text-[10px] text-slate-400 font-normal">Li Ming</span>
+                </div>
               </div>
 
-              {/* Chinese Name Stamp */}
-              <div className="flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-900/90 border border-slate-700/70 text-[11px] font-bold text-slate-200 tracking-wider">
-                <span className="text-rose-400 mr-1">李明</span>
-                <span className="text-[10px] text-slate-400 font-normal">Li Ming</span>
-              </div>
+              {state === 'speaking' && (
+                <div className="absolute bottom-1 w-6 sm:w-8 h-1 rounded-full bg-emerald-400/80 blur-[1px] animate-pulse" />
+              )}
             </div>
+          </div>
+        </div>
 
-            {/* Speaking reactive sound glow inside */}
-            {state === 'speaking' && (
-              <div className="absolute bottom-1 w-8 h-1 rounded-full bg-emerald-400/80 blur-[1px] animate-pulse" />
-            )}
+        {/* Mobile Info Column */}
+        <div className="flex flex-col sm:items-center min-w-0">
+          <div className="sm:mt-1 flex items-center sm:justify-center">
+            {getStatusBadge()}
+          </div>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-[11px] text-slate-500 font-medium flex items-center gap-1 truncate">
+            <span>Escenario:</span>
+            <span className="text-slate-300 font-semibold truncate max-w-[160px] sm:max-w-none">{scenarioTitle}</span>
           </div>
         </div>
       </div>
 
       {/* Voice Visualizer Spectrum Bar */}
-      <div className="w-48 sm:w-56 h-8 flex items-center justify-center mt-2.5">
+      <div className="w-24 sm:w-56 h-7 sm:h-8 flex items-center justify-center sm:mt-2 flex-shrink-0">
         <canvas
           ref={canvasRef}
           width={220}
           height={32}
           className="w-full h-full block"
         />
-      </div>
-
-      {/* Status Badge */}
-      <div className="mt-1 flex items-center justify-center">
-        {getStatusBadge()}
-      </div>
-
-      {/* Context Scenario Pill */}
-      <div className="mt-1 text-[11px] text-slate-500 font-medium flex items-center gap-1">
-        <span>Escenario:</span>
-        <span className="text-slate-300 font-semibold">{scenarioTitle}</span>
       </div>
 
     </div>

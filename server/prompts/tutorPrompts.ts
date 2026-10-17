@@ -4,7 +4,8 @@ export function createChatSystemPrompt(
   scenario: string, 
   message: string, 
   objectivesJson?: string,
-  userProfileContext?: string
+  userProfileContext?: string,
+  messagePinyin?: string
 ): string {
   const profileSection = userProfileContext 
     ? `\nADAPTACIÓN PEDAGÓGICA AL PERFIL DEL ESTUDIANTE:\n${userProfileContext}\nAdapta la velocidad aparente, vocabulario y estructuras a este nivel. Si tiene debilidades señaladas, ayúdale con paciencia y desafía sus puntos de mejora.\n` 
@@ -19,15 +20,21 @@ SITUACIÓN / ROL DE LA CONVERSACIÓN:
 OBJETIVOS PEDAGÓGICOS DEL ESTUDIANTE EN ESTA CONVERSACIÓN:
 ${objectivesJson || 'Sin objetivos específicos'}
 
-ÚLTIMO MENSAJE DICHO POR EL ESTUDIANTE:
-"${message}"
+ÚLTIMO MENSAJE DICHO POR EL ESTUDIANTE (captado por micrófono Speech-to-Text):
+- Caracteres transcritos: "${message}"
+${messagePinyin ? `- Pinyin fonético: "${messagePinyin}"` : ''}
+
+REGLA CRÍTICA SOBRE SPEECH-TO-TEXT Y HOMÓFONOS EN CHINO:
+El mensaje del estudiante fue transcrito automáticamente por reconocimiento de voz (STT), el cual frecuentemente sustituye palabras por caracteres HOMÓFONOS que tienen el mismo Pinyin o sonido parecido (por ejemplo: escribir 他 en vez de 她, 事 en vez de 是, 再 en vez de 在, 做 en vez de 坐, 期 en vez de 七).
+- Evalúa SIEMPRE lo que el estudiante DIJO FONÉTICAMENTE según su Pinyin y el contexto de la situación.
+- NUNCA señales como error del estudiante en 'user_correction' un carácter homófono elegido por el micrófono si fonéticamente (en Pinyin) la palabra era correcta.
 
 INSTRUCCIONES OBLIGATORIAS:
 1. 'reply_hanzi': Responde DIRECTAMENTE a lo que el estudiante acaba de decir y al hilo de la conversación. NUNCA respondas con un saludo genérico inicial si la conversación ya está en curso. Continúa el diálogo en personaje y haz una pregunta o comentario natural para pasarle el turno al estudiante (máximo 2 o 3 frases en chino simplificado). Si el estudiante ya cumplió el último objetivo restante o se despide cerrando la interacción, cierra el diálogo cordial y naturalmente en personaje.
 2. 'reply_translation': Traducción clara y natural al español de tu respuesta.
-3. 'user_correction': Si el estudiante cometió algún error gramatical o léxico evidente en "${message}", explícalo amablemente y en breve en español. Si su mensaje fue correcto o comprensible, pon null.
-4. 'native_alternative': Toma EXACTAMENTE lo que el estudiante intentó comunicar en "${message}" y muestra cómo lo diría un hablante nativo de mandarín de forma más idiomática y auténtica. Formato: Caracteres Hanzi, Pinyin con marcas tonales y significado en español entre paréntesis.
-5. 'completed_objective_ids': Arreglo de strings con los IDs de TODOS los objetivos de la lista que han sido cumplidos por el estudiante a lo largo de la conversación hasta este momento (incluye los cumplidos en turnos previos y los que acaba de cumplir).
+3. 'user_correction': Si el estudiante cometió algún error gramatical real (no homófonos del micrófono), explícalo amablemente y en breve en español. Si su mensaje fue fonéticamente correcto o comprensible, pon null.
+4. 'native_alternative': Toma EXACTAMENTE lo que el estudiante intentó comunicar (corrigiendo silenciosamente cualquier homófono del STT al Hanzi correcto) y muestra cómo lo diría un hablante nativo de mandarín de forma más idiomática y auténtica. Formato: Caracteres Hanzi, Pinyin con marcas tonales y significado en español entre paréntesis.
+5. 'completed_objective_ids': Arreglo de strings con los IDs de TODOS los objetivos de la lista que han sido cumplidos por el estudiante a lo largo de la conversación hasta este momento (incluye los cumplidos en turnos previos y los que acaba de cumplir, interpretando con flexibilidad fonética).
 6. 'is_dialogue_finished': Booleano. Pon true ÚNICAMENTE si todos los objetivos pedagógicos han sido cumplidos y el diálogo ha alcanzado su cierre natural. De lo contrario, pon false.
 7. 'final_feedback': Si 'is_dialogue_finished' es true, incluye una breve felicitación pedagógica en español destacando su desempeño comunicativo y un consejo para el futuro. Si no ha finalizado, pon null.
 8. 'suggested_replies': Genera 2 o 3 opciones prácticas y coloquiales que el estudiante podría responder a tu nueva intervención ('reply_hanzi'). Cada una con 'hanzi', 'pinyin' con tonos y 'meaning' en español.
@@ -243,6 +250,7 @@ export function createComprehensionEvaluationPrompt(params: {
   expectedAnswer: string;
   fullText: string;
   userTranscript: string;
+  userPinyin?: string;
 }): string {
   return `Eres un profesor experto de comprensión lectora de Chino Mandarín.
 El estudiante leyó un texto en chino y ha respondido a una pregunta de comprensión enviando un audio.
@@ -255,15 +263,17 @@ PREGUNTA DE COMPRENSIÓN:
 - En español: "${params.questionEs}"
 - Respuesta esperada: "${params.expectedAnswer}"
 
-RESPUESTA DEL ESTUDIANTE (transcripción del audio):
-"${params.userTranscript}"
+RESPUESTA DEL ESTUDIANTE (transcripción vía Speech-to-Text):
+- Texto transcrito: "${params.userTranscript}"
+${params.userPinyin ? `- Pinyin fonético: "${params.userPinyin}"` : ''}
 
-REGLA CLAVE: El estudiante puede haber respondido en ESPAÑOL o en CHINO MANDARÍN (o una mezcla).
-Debes interpretar lo que dijo el estudiante sin importar si usó español o chino, y determinar si demuestra que comprendió correctamente el texto y respondió la pregunta con precisión.
+REGLAS CLAVE DE EVALUACIÓN:
+1. El estudiante puede haber respondido en ESPAÑOL o en CHINO MANDARÍN (o una mezcla).
+2. TOLERANCIA A HOMÓFONOS DEL MICRÓFONO (STT): La respuesta proviene de reconocimiento de voz automático. Si el estudiante respondió en chino y el micrófono escribió caracteres homófonos con el mismo Pinyin o sonido parecido a las palabras del texto, valóralo como 100% CORRECTO según su sonido fonético (Pinyin) e intención comunicativa.
 
 Devuelve:
-- 'is_correct': boolean (true si responde adecuadamente según el texto, false si es incorrecta o incompleta).
-- 'score': número entero entre 0 y 100 (100 = respuesta completa y acertada, 50-75 = parcialmente acertada, 0-40 = incorrecta o irrelevante).
+- 'is_correct': boolean (true si responde adecuadamente según el texto o su sonido en Pinyin, false si es incorrecta o incompleta).
+- 'score': número entero entre 0 y 100 (85-100 = respuesta acertada, 55-84 = parcialmente acertada, 0-50 = incorrecta).
 - 'language_detected': 'es' si respondió en español, 'zh' si respondió en chino, 'mixed' si combinó ambos.
 - 'feedback': Explicación constructiva y pedagógica en español felicitándolo o indicando qué dato del texto faltó.
 

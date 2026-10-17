@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { isSpeechRecognitionSupported } from '../utils/speechUtils.js';
+import { isSpeechRecognitionSupported, isMobileBrowser } from '../utils/speechUtils.js';
 
 interface UseSpeechRecognitionOptions {
   lang?: string;
@@ -20,10 +20,12 @@ export function useSpeechRecognition({
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
   const maxSafetyTimerRef = useRef<any>(null);
+  const flushTimerRef = useRef<any>(null);
   const transcriptRef = useRef<string>('');
   const prevSessionTranscriptRef = useRef<string>('');
   const isStartingRef = useRef<boolean>(false);
   const isFinalizedRef = useRef<boolean>(false);
+  const isStoppingRef = useRef<boolean>(false);
   const isRecordingRef = useRef<boolean>(false);
 
   const isSupported = isSpeechRecognitionSupported();
@@ -37,32 +39,51 @@ export function useSpeechRecognition({
       clearTimeout(maxSafetyTimerRef.current);
       maxSafetyTimerRef.current = null;
     }
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
   }, []);
 
-  const finalizeAndDeliver = useCallback(() => {
+  const deliverFinalTranscript = useCallback(() => {
     if (isFinalizedRef.current) return;
     isFinalizedRef.current = true;
+    isStoppingRef.current = false;
 
     clearTimers();
     isRecordingRef.current = false;
     setIsRecording(false);
     isStartingRef.current = false;
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
+    recognitionRef.current = null;
 
     const finalTranscript = transcriptRef.current.trim();
     onTranscriptFinalized?.(finalTranscript);
   }, [clearTimers, onTranscriptFinalized]);
 
   const stopRecording = useCallback(() => {
-    // Explicit user-driven stop: called by button click or touch release
-    finalizeAndDeliver();
-  }, [finalizeAndDeliver]);
+    if (isFinalizedRef.current || isStoppingRef.current) return;
+    isStoppingRef.current = true;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    isStartingRef.current = false;
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    if (recognitionRef.current) {
+      try {
+        // Use stop() rather than abort() so buffered mobile audio flushes its final onresult
+        recognitionRef.current.stop();
+      } catch {}
+    }
+
+    // Give mobile browsers ~260ms to fire the final onresult before reading transcriptRef
+    flushTimerRef.current = setTimeout(() => {
+      deliverFinalTranscript();
+    }, 260);
+  }, [deliverFinalTranscript]);
 
   const startRecording = useCallback(() => {
     if (isRecordingRef.current || isStartingRef.current) return;
@@ -73,6 +94,7 @@ export function useSpeechRecognition({
     setTranscript('');
     setRecordingSeconds(0);
     isFinalizedRef.current = false;
+    isStoppingRef.current = false;
     clearTimers();
 
     const SpeechRecognition =
@@ -94,8 +116,9 @@ export function useSpeechRecognition({
       recognition.lang = lang;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      // Continuous mode so the microphone does NOT shut off at small pauses
-      recognition.continuous = true;
+      // On Android Chrome, continuous=true causes cumulative duplicate strings;
+      // using auto-restart on onend works cleanly across both Android and Desktop.
+      recognition.continuous = !isMobileBrowser();
 
       recognition.onstart = () => {
         isStartingRef.current = false;
@@ -103,17 +126,30 @@ export function useSpeechRecognition({
         setIsRecording(true);
       };
 
-      // Accumulate recognized segments smoothly without automatic cutoff
       recognition.onresult = (event: any) => {
         let currentSessionTranscript = '';
         for (let i = 0; i < event.results.length; ++i) {
-          currentSessionTranscript += event.results[i][0].transcript;
+          const seg = (event.results[i][0]?.transcript || '').trim();
+          if (!seg) continue;
+          // Guard against Android Chrome cumulative overlap where results[i] starts with results[i-1]
+          if (currentSessionTranscript && seg.startsWith(currentSessionTranscript)) {
+            currentSessionTranscript = seg;
+          } else if (currentSessionTranscript && currentSessionTranscript.endsWith(seg)) {
+            // Already included
+          } else {
+            currentSessionTranscript += seg;
+          }
         }
 
         const prefix = prevSessionTranscriptRef.current;
-        const full = prefix 
-          ? `${prefix} ${currentSessionTranscript}`.trim() 
-          : currentSessionTranscript.trim();
+        let full = currentSessionTranscript.trim();
+        if (prefix) {
+          if (full.startsWith(prefix)) {
+            // Already includes prefix
+          } else {
+            full = `${prefix} ${full}`.trim();
+          }
+        }
 
         transcriptRef.current = full;
         setTranscript(full);
@@ -121,16 +157,17 @@ export function useSpeechRecognition({
 
       recognition.onerror = (event: any) => {
         console.warn('Speech recognition event error:', event.error);
-        if (event.error === 'not-allowed') {
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           isStartingRef.current = false;
           isRecordingRef.current = false;
+          isStoppingRef.current = false;
           clearTimers();
           setIsRecording(false);
           const msg = 'Permiso de micrófono denegado. Habilita el acceso en tu navegador.';
           setError(msg);
           onError?.(msg);
-        } else if (event.error === 'no-speech') {
-          // Normal during thinking pauses; keep recording!
+        } else if (event.error === 'no-speech' || event.error === 'aborted') {
+          // Normal during thinking pauses or manual stop; ignore
         } else {
           const msg = `Aviso de voz: ${event.error}`;
           setError(msg);
@@ -139,9 +176,18 @@ export function useSpeechRecognition({
       };
 
       recognition.onend = () => {
+        // If user clicked stop, flush right after onend settles
+        if (isStoppingRef.current && !isFinalizedRef.current) {
+          if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = setTimeout(() => {
+            deliverFinalTranscript();
+          }, 60);
+          return;
+        }
+
         // If the browser prematurely fires onend while user is still recording,
         // seamlessly auto-restart so the user remains in complete control.
-        if (isRecordingRef.current && !isFinalizedRef.current) {
+        if (isRecordingRef.current && !isFinalizedRef.current && !isStoppingRef.current) {
           prevSessionTranscriptRef.current = transcriptRef.current;
           try {
             recognition.start();
@@ -151,7 +197,7 @@ export function useSpeechRecognition({
           }
         }
 
-        if (!isRecordingRef.current) {
+        if (!isRecordingRef.current && !isStoppingRef.current) {
           setIsRecording(false);
           isStartingRef.current = false;
           clearTimers();
@@ -160,16 +206,13 @@ export function useSpeechRecognition({
 
       recognition.start();
 
-      // Seconds counter
       timerRef.current = setInterval(() => {
         setRecordingSeconds((sec) => sec + 1);
       }, 1000);
 
-      // Max safety timeout (90s) in case the user forgets to stop
       maxSafetyTimerRef.current = setTimeout(() => {
-        finalizeAndDeliver();
+        stopRecording();
       }, 90000);
-
     } catch (err: any) {
       isStartingRef.current = false;
       isRecordingRef.current = false;
@@ -180,12 +223,7 @@ export function useSpeechRecognition({
       setError(msg);
       onError?.(msg);
     }
-  }, [
-    lang, 
-    clearTimers, 
-    finalizeAndDeliver, 
-    onError
-  ]);
+  }, [lang, clearTimers, deliverFinalTranscript, stopRecording, onError]);
 
   useEffect(() => {
     return () => {

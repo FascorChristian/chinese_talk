@@ -34,11 +34,12 @@ import {
   HskkLevel 
 } from '../../types/index.js';
 import { HanziWithPinyin } from '../common/HanziWithPinyin.js';
-import { playMandarinTTS, stopMandarinTTS } from '../../utils/speechUtils.js';
+import { playMandarinTTS, stopMandarinTTS, isMobileBrowser } from '../../utils/speechUtils.js';
 import { 
   getUserProfile, 
   saveUserProfile 
 } from '../../services/userProfileService.js';
+import { savePracticeResultToCloud } from '../../services/storageService.js';
 import { 
   generateDiagnosticChallenge, 
   evaluateDiagnostic,
@@ -50,6 +51,7 @@ import {
 
 interface DiagnosticViewProps {
   onBackToMenu: () => void;
+  speechRate?: number;
 }
 
 type StepIndex = 0 | 1 | 2 | 3 | 4;
@@ -66,7 +68,10 @@ function getNextHskLevel(current: HskLevel): HskLevel {
   }
 }
 
-export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) => {
+export const DiagnosticView: React.FC<DiagnosticViewProps> = ({
+  onBackToMenu,
+  speechRate = 1.0,
+}) => {
   const [userProfile, setUserProfile] = useState<UserProfile>(getUserProfile());
   const [currentStep, setCurrentStep] = useState<StepIndex>(0);
   const [modeType, setModeType] = useState<'diagnostic' | 'evaluation_challenge'>('diagnostic');
@@ -145,6 +150,24 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
       } catch {}
       recognitionRef.current = null;
     }
+  };
+
+  const stopAndFlushMicrophone = async (fallbackStateText: string): Promise<string> => {
+    isRecordingRef.current = false;
+    isFinalizedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 260));
+    const finalTranscript = (transcriptRef.current || fallbackStateText).trim();
+    cancelRecording();
+    return finalTranscript;
   };
 
   const cancelRecording = () => {
@@ -236,7 +259,7 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
       recognition.lang = lang;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.continuous = true;
+      recognition.continuous = !isMobileBrowser();
 
       isRecordingRef.current = true;
       isFinalizedRef.current = false;
@@ -252,18 +275,28 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
       recognition.onresult = (event: any) => {
         let sessionText = '';
         for (let i = 0; i < event.results.length; ++i) {
-          sessionText += event.results[i][0].transcript;
+          const seg = (event.results[i][0]?.transcript || '').trim();
+          if (!seg) continue;
+          if (sessionText && seg.startsWith(sessionText)) {
+            sessionText = seg;
+          } else if (sessionText && sessionText.endsWith(seg)) {
+            // Already included
+          } else {
+            sessionText += `${sessionText && lang !== 'zh-CN' ? ' ' : ''}${seg}`;
+          }
         }
-        const full = prevSessionTranscriptRef.current
-          ? `${prevSessionTranscriptRef.current} ${sessionText}`.trim()
-          : sessionText.trim();
+        const prefix = prevSessionTranscriptRef.current;
+        let full = sessionText.trim();
+        if (prefix && !full.startsWith(prefix)) {
+          full = `${prefix} ${full}`.trim();
+        }
         transcriptRef.current = full;
         onUpdate(full);
       };
 
       recognition.onerror = (e: any) => {
         console.warn('Recognition error in diagnostic:', e.error);
-        if (e.error === 'no-speech') return;
+        if (e.error === 'no-speech' || e.error === 'aborted') return;
         if (e.error === 'not-allowed') {
           stopActiveAudioEngine();
           cancelRecording();
@@ -328,8 +361,7 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
   };
 
   const stopConvRecordingAndSend = async () => {
-    const text = (transcriptRef.current || liveConvTranscript).trim();
-    cancelRecording();
+    const text = await stopAndFlushMicrophone(liveConvTranscript);
 
     if (!text) {
       alert('No se detectó audio en chino. Habla frente al micrófono antes de enviar.');
@@ -405,9 +437,8 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
 
   const stopShadowingRecordingAndEvaluate = async () => {
     if (!currentTurn) return;
-    const text = (transcriptRef.current || liveShadowingTranscript).trim();
     const duration = Math.max(1.0, (Date.now() - recordStartTimeRef.current) / 1000);
-    cancelRecording();
+    const text = await stopAndFlushMicrophone(liveShadowingTranscript);
 
     if (!text) {
       alert('No se detectó audio en chino mandarín. Por favor repite la frase frente al micrófono.');
@@ -474,9 +505,8 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
 
   const stopReadingAloudRecordAndEvaluate = async () => {
     if (!challenge) return;
-    const text = (transcriptRef.current || liveReadingAloudTranscript).trim();
     const duration = Math.max(1.0, (Date.now() - recordStartTimeRef.current) / 1000);
-    cancelRecording();
+    const text = await stopAndFlushMicrophone(liveReadingAloudTranscript);
 
     if (!text) {
       alert('No se detectó audio en chino para la lectura. Por favor lee el texto en voz alta.');
@@ -534,8 +564,7 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
   };
 
   const stopCompQuestionRecordAndEvaluate = async (q: any) => {
-    const text = (transcriptRef.current || liveCompTranscript).trim();
-    cancelRecording();
+    const text = await stopAndFlushMicrophone(liveCompTranscript);
 
     if (!text) {
       alert('No se detectó respuesta oral en el audio. Responde a la pregunta frente al micrófono.');
@@ -572,6 +601,7 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
     }
   };
 
+
   // ==========================================
   // FINALIZE & SUBMIT TO GENERATE FINAL REPORT
   // ==========================================
@@ -590,7 +620,8 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
           userUtterance: u.text,
           aiReply: convMessages[i * 2 + 1]?.text || '',
         })),
-      shadowingData: Object.entries(shadowingResults).map(([turnId, data]) => {
+      shadowingData: Object.entries(shadowingResults).map(([turnId, rawData]) => {
+        const data = rawData as { transcript: string; score: number };
         const turn = challenge.shadowingTask.turns.find((t) => t.id === turnId);
         return {
           turnId,
@@ -603,19 +634,31 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
         aloudTranscript: readingAloudResult?.transcript || '',
         expectedText: challenge.readingTask.full_text_hanzi,
         aloudScore: readingAloudResult?.score || 60,
-        answers: Object.entries(comprehensionAnswers).map(([questionId, data]) => ({
-          questionId,
-          answerTranscript: data.answer,
-          isCorrect: data.isCorrect,
-          score: data.score,
-        })),
+        answers: Object.entries(comprehensionAnswers).map(([questionId, rawData]) => {
+          const data = rawData as { answer: string; isCorrect: boolean; score: number };
+          return {
+            questionId,
+            answerTranscript: data.answer,
+            isCorrect: data.isCorrect,
+            score: data.score,
+          };
+        }),
       },
     };
 
     try {
       const finalReport = await evaluateDiagnostic(submission);
       setReport(finalReport);
+      savePracticeResultToCloud({
+        mode: 'diagnostic',
+        title: modeType === 'evaluation_challenge' ? `Desafío ${challenge.targetHskLevel}` : 'Diagnóstico Integral HSK',
+        score: finalReport.overallScore,
+        passed: finalReport.levelUpgradeGranted,
+        hskLevel: `${finalReport.assignedHskLevel} • ${finalReport.assignedHskkLevel}`,
+        details: finalReport.challengeResultSummary,
+      });
     } catch (err) {
+
       console.error('Failed to generate diagnostic report:', err);
       // Fallback
       setReport({
@@ -921,11 +964,11 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
                 </div>
                 {m.sender === 'ai' && (
                   <button
-                    onClick={() => playMandarinTTS(m.text, 1.0)}
+                    onClick={() => playMandarinTTS(m.text, speechRate)}
                     className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-amber-300 mt-1 cursor-pointer"
                   >
                     <Volume2 className="w-3 h-3" />
-                    <span>Escuchar a Li Ming</span>
+                    <span>Escuchar a Li Ming ({speechRate}x)</span>
                   </button>
                 )}
               </div>
@@ -1034,13 +1077,14 @@ export const DiagnosticView: React.FC<DiagnosticViewProps> = ({ onBackToMenu }) 
                   Escucha atentamente el audio nativo y repite la frase de inmediato:
                 </span>
                 <button
-                  onClick={() => playMandarinTTS(currentTurn.hanzi, 0.9)}
+                  onClick={() => playMandarinTTS(currentTurn.hanzi, speechRate)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-500/20 text-teal-300 hover:bg-teal-500/30 border border-teal-500/40 text-xs font-bold cursor-pointer transition-all"
                 >
                   <Volume2 className="w-4 h-4" />
-                  <span>Escuchar modelo</span>
+                  <span>Escuchar modelo ({speechRate}x)</span>
                 </button>
               </div>
+
 
               {/* Chinese text display */}
               <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">

@@ -215,25 +215,68 @@ function createLocalFallbackScenario(prompt: string): Scenario {
   };
 }
 
+const clientResponseCache = new Map<string, { data: any; expiresAt: number }>();
+const clientInFlight = new Map<string, Promise<any>>();
+
+async function cachedPostJson<T>(
+  url: string,
+  body: any,
+  ttlMs: number = 15 * 60 * 1000,
+  signal?: AbortSignal
+): Promise<T> {
+  const key = `${url}:${JSON.stringify(body)}`;
+  const now = Date.now();
+  const cached = clientResponseCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.data as T;
+  }
+
+  const existing = clientInFlight.get(key);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+
+  const reqPromise = (async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status} en ${url}`);
+      }
+
+      const data = await response.json();
+      if (ttlMs > 0) {
+        clientResponseCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      }
+      return data as T;
+    } finally {
+      clientInFlight.delete(key);
+    }
+  })();
+
+  clientInFlight.set(key, reqPromise);
+  return reqPromise;
+}
+
 export async function generateCustomScenario(
   prompt: string,
   signal?: AbortSignal
 ): Promise<Scenario> {
   try {
-    const response = await fetch('/api/generate-scenario', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, userProfileContext: getProfilePromptContext() }),
-      signal,
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.title && data.initialMessage) {
-        return data;
-      }
+    const data = await cachedPostJson<Scenario>(
+      '/api/generate-scenario',
+      { prompt, userProfileContext: getProfilePromptContext() },
+      20 * 60 * 1000,
+      signal
+    );
+    if (data && data.title && data.initialMessage) {
+      return data;
     }
-    console.warn(`Server responded with ${response.status} to /api/generate-scenario, using local fallback.`);
   } catch (err) {
     console.warn('Network issue calling /api/generate-scenario, using local fallback:', err);
   }
@@ -241,6 +284,7 @@ export async function generateCustomScenario(
   // Graceful fallback guarantees 100% uptime for scenario generation
   return createLocalFallbackScenario(prompt);
 }
+
 
 
 export async function sendMessageToTutor(
@@ -302,18 +346,7 @@ export async function generateReadingContent(
     ...rawBody,
     userProfileContext: getProfilePromptContext(),
   };
-  const response = await fetch('/api/generate-reading', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error ${response.status} en /api/generate-reading`);
-  }
-
-  return response.json();
+  return cachedPostJson<ReadingContent>('/api/generate-reading', body, 25 * 60 * 1000, signal);
 }
 
 export async function evaluateReadingAloud(
@@ -348,18 +381,12 @@ export async function evaluateReadingComprehension(
   },
   signal?: AbortSignal
 ): Promise<ReadingComprehensionAnswer> {
-  const response = await fetch('/api/evaluate-comprehension', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error ${response.status} en /api/evaluate-comprehension`);
-  }
-
-  return response.json();
+  return cachedPostJson<ReadingComprehensionAnswer>(
+    '/api/evaluate-comprehension',
+    data,
+    10 * 60 * 1000,
+    signal
+  );
 }
 
 
@@ -372,19 +399,9 @@ export async function generateShadowingContent(
     ...rawBody,
     userProfileContext: getProfilePromptContext(),
   };
-  const response = await fetch('/api/generate-shadowing', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error ${response.status} en /api/generate-shadowing`);
-  }
-
-  return response.json();
+  return cachedPostJson<ShadowingDialogue>('/api/generate-shadowing', body, 25 * 60 * 1000, signal);
 }
+
 
 export async function evaluateShadowingTurn(
   data: {

@@ -11,6 +11,14 @@ import {
   handleGenerateDiagnosticChallenge, 
   handleEvaluateDiagnostic 
 } from '../controllers/diagnosticController.js';
+import { handleMandarinTTS } from '../controllers/ttsController.js';
+import {
+  handleGetStorage,
+  handleSyncStorage,
+  handleDeleteStorageItem,
+  handleExportCsv,
+} from '../controllers/storageController.js';
+import { getGeminiRpmStats } from '../config/gemini.js';
 
 export const apiRouter = Router();
 
@@ -25,12 +33,22 @@ apiRouter.post('/generate-scenario', handleGenerateScenario);
 apiRouter.post('/generate-diagnostic-challenge', handleGenerateDiagnosticChallenge);
 apiRouter.post('/evaluate-diagnostic', handleEvaluateDiagnostic);
 
+// Hardware-rate-compatible TTS proxy & Cloud Storage / Google Sheets & Drive sync
+apiRouter.get('/tts', handleMandarinTTS);
+apiRouter.get('/storage', handleGetStorage);
+apiRouter.post('/storage/sync', handleSyncStorage);
+apiRouter.delete('/storage/:category/:id', handleDeleteStorageItem);
+apiRouter.get('/storage/export-csv/:category', handleExportCsv);
+
 apiRouter.get('/health', (_req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    time: new Date().toISOString(),
+    gemini: getGeminiRpmStats(),
+  });
 });
 
 // 404 handler for undefined API routes
 apiRouter.use('*', (_req, res) => {
   res.status(404).json({ error: 'Ruta API no encontrada' });
 });
-

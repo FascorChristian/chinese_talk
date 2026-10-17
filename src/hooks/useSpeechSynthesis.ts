@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { playMandarinTTS, stopMandarinTTS } from '../utils/speechUtils.js';
+import { playMandarinTTS, stopMandarinTTS, setGlobalPlaybackRate } from '../utils/speechUtils.js';
 
 interface UseSpeechSynthesisProps {
   speechRate?: number;
@@ -9,6 +9,11 @@ export function useSpeechSynthesis({ speechRate = 1.0 }: UseSpeechSynthesisProps
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentText, setCurrentText] = useState<string | null>(null);
   const cancelTtsRef = useRef<(() => void) | null>(null);
+
+  // Immediately update playbackRate on active HTML5 audio whenever speechRate changes
+  useEffect(() => {
+    setGlobalPlaybackRate(speechRate);
+  }, [speechRate]);
 
   const stop = useCallback(() => {
     if (cancelTtsRef.current) {
@@ -69,4 +74,3 @@ export function useSpeechSynthesis({ speechRate = 1.0 }: UseSpeechSynthesisProps
     stop,
   };
 }
-

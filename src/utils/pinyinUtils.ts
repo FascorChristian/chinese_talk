@@ -58,6 +58,8 @@ export function getFullPinyin(text: string): string {
   }
 }
 
+export const toPinyinDisplay = getFullPinyin;
+
 /**
  * Tone color mapping for optional tone highlighting
  */

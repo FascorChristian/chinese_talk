@@ -233,23 +233,55 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
 
       </div>
 
+      {/* Notebook Banner */}
+      <div
+        onClick={() => !isLoadingContent && onSelectMode('notebook')}
+        className="w-full mb-8 p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-sky-950/30 to-slate-900 border border-sky-500/30 hover:border-sky-400/60 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer transition-all hover:-translate-y-0.5"
+      >
+        <div className="space-y-1 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
+              Cuaderno Personal
+            </span>
+            <span className="text-xs text-emerald-300 font-semibold">
+              • Reutiliza ejercicios con 0 llamadas a la IA
+            </span>
+          </div>
+          <h3 className="text-lg sm:text-xl font-black text-white">
+            Mi Cuaderno de Estudio: Ejercicios, Vocabulario y Evaluaciones
+          </h3>
+          <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+            Accede a tus escenarios, diálogos de shadowing y lecturas guardadas, repasa tu vocabulario con audio y guarda tu progreso de forma automática.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="flex-shrink-0 px-5 py-3 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black shadow-lg shadow-sky-950/50 flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <span>Abrir Mi Cuaderno</span>
+          <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
+
       {/* Pedagogical info banner */}
-      <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-400 py-3 px-6 rounded-2xl bg-slate-900/50 border border-slate-800">
+      <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-xs text-slate-400 py-3 px-4 sm:px-6 rounded-2xl bg-slate-900/50 border border-slate-800">
         <div className="flex items-center gap-2">
           <Globe2 className="w-4 h-4 text-rose-400" />
           <span>Pronunciación de Pekín (普通话)</span>
         </div>
         <div className="flex items-center gap-2">
           <Volume2 className="w-4 h-4 text-amber-400" />
-          <span>Síntesis de voz con control de velocidad</span>
+          <span>Control de velocidad real (0.75x / 1.0x / 1.25x)</span>
         </div>
         <div className="flex items-center gap-2">
           <Mic className="w-4 h-4 text-emerald-400" />
-          <span>Reconocimiento por voz con feedback</span>
+          <span>Tolerancia inteligente a homófonos Pinyin</span>
         </div>
       </div>
 
     </div>
   );
 };
+
 

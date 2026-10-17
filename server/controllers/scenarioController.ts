@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
-import { getGenAI } from '../config/gemini.js';
-import { ENV } from '../config/env.js';
+import { getGenAI, generateGeminiJson } from '../config/gemini.js';
 import { 
   createScenarioGenerationPrompt, 
   SCENARIO_GENERATION_SCHEMA 
@@ -13,9 +12,48 @@ export async function handleGenerateScenario(req: Request, res: Response) {
       ? rawPrompt.trim()
       : 'Conversación cotidiana y práctica en Pekín';
 
-    const ai = getGenAI();
+    const userProfileContext = req.body?.userProfileContext || '';
+    const promptText = createScenarioGenerationPrompt(cleanPrompt, userProfileContext);
 
-    if (!ai) {
+    const result = await generateGeminiJson<any>({
+      cacheScope: `scenario-gen:${cleanPrompt}`,
+      contents: promptText,
+      responseSchema: SCENARIO_GENERATION_SCHEMA,
+      ttlMs: 1000 * 60 * 60,
+    });
+
+    if (result && result.data && result.data.title && result.data.initialMessage) {
+      const parsed = result.data;
+      const id = `scenario-${Date.now()}`;
+      return res.json({
+        id,
+        ...parsed,
+        timeLimitSeconds: typeof parsed.timeLimitSeconds === 'number' ? parsed.timeLimitSeconds : 240,
+        dialogueStructure: Array.isArray(parsed.dialogueStructure) && parsed.dialogueStructure.length > 0
+          ? parsed.dialogueStructure
+          : [
+              '1. Saludo inicial y planteamiento de la situación',
+              '2. Consulta de detalles, opciones o precio',
+              '3. Confirmación del acuerdo y cierre cordial'
+            ],
+        objectives: (Array.isArray(parsed.objectives) && parsed.objectives.length > 0
+          ? parsed.objectives
+          : [
+              { id: 'obj_1', description: 'Saludar y comunicar tu intención en mandarín' },
+              { id: 'obj_2', description: 'Consultar detalles o hacer una pregunta relevante' },
+              { id: 'obj_3', description: 'Concluir la conversación amablemente' }
+            ]).map((obj: any, idx: number) => ({
+              id: obj.id || `obj_${idx + 1}`,
+              description: obj.description,
+              completed: false
+            })),
+        model: result.model,
+        source: 'gemini'
+      });
+    }
+
+    const ai = getGenAI();
+    if (!ai || !result) {
       // Dynamic fallback based on keywords
       const lower = cleanPrompt.toLowerCase();
       const id = `custom-${Date.now()}`;
@@ -98,7 +136,6 @@ export async function handleGenerateScenario(req: Request, res: Response) {
         });
       }
 
-      // Default concrete in-character fallback (Tea House in Beijing)
       return res.json({
         id,
         title: 'Degustando Té en la Casa de Té Maliandao',
@@ -136,67 +173,6 @@ export async function handleGenerateScenario(req: Request, res: Response) {
         }
       });
     }
-
-    const userProfileContext = req.body?.userProfileContext || '';
-    const promptText = createScenarioGenerationPrompt(cleanPrompt, userProfileContext);
-
-    const CANDIDATE_MODELS = [
-      ENV.GEMINI_MODEL,
-      'gemini-3.5-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.1-flash-lite',
-      'gemini-3.7-flash'
-    ];
-
-    let lastError: any = null;
-    for (const modelName of CANDIDATE_MODELS) {
-      if (!modelName) continue;
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: promptText,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: SCENARIO_GENERATION_SCHEMA,
-          }
-        });
-
-        const parsed = JSON.parse(response.text || '{}');
-        if (parsed && parsed.title && parsed.initialMessage) {
-          const id = `scenario-${Date.now()}`;
-          return res.json({
-            id,
-            ...parsed,
-            timeLimitSeconds: typeof parsed.timeLimitSeconds === 'number' ? parsed.timeLimitSeconds : 240,
-            dialogueStructure: Array.isArray(parsed.dialogueStructure) && parsed.dialogueStructure.length > 0
-              ? parsed.dialogueStructure
-              : [
-                  '1. Saludo inicial y planteamiento de la situación',
-                  '2. Consulta de detalles, opciones o precio',
-                  '3. Confirmación del acuerdo y cierre cordial'
-                ],
-            objectives: (Array.isArray(parsed.objectives) && parsed.objectives.length > 0
-              ? parsed.objectives
-              : [
-                  { id: 'obj_1', description: 'Saludar y comunicar tu intención en mandarín' },
-                  { id: 'obj_2', description: 'Consultar detalles o hacer una pregunta relevante' },
-                  { id: 'obj_3', description: 'Concluir la conversación amablemente' }
-                ]).map((obj: any, idx: number) => ({
-                  id: obj.id || `obj_${idx + 1}`,
-                  description: obj.description,
-                  completed: false
-                })),
-            model: modelName,
-            source: 'gemini'
-          });
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Scenario generation model ${modelName} failed (${err?.status || err?.message}). Trying next candidate...`);
-      }
-    }
-
-    throw lastError || new Error('All candidate models failed for scenario generation.');
   } catch (error: any) {
     console.error('Error in /api/generate-scenario:', error);
     return res.json({

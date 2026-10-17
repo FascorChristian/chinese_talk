@@ -25,7 +25,9 @@ import {
   Trophy,
   Globe2,
   Check,
-  Timer
+  Timer,
+  Cloud,
+  BookmarkPlus
 } from 'lucide-react';
 import { 
   ReadingContent, 
@@ -35,26 +37,37 @@ import {
   ReadingAloudEvaluation 
 } from '../../types/index.js';
 import { HanziWithPinyin } from '../common/HanziWithPinyin.js';
-import { playMandarinTTS, stopMandarinTTS } from '../../utils/speechUtils.js';
+import { playMandarinTTS, stopMandarinTTS, setGlobalPlaybackRate, isMobileBrowser } from '../../utils/speechUtils.js';
 import { 
   generateReadingContent, 
   evaluateReadingAloud, 
   evaluateReadingComprehension 
 } from '../../services/api.js';
+import {
+  saveExerciseToCloud,
+  saveVocabularyToCloud,
+  savePracticeResultToCloud,
+} from '../../services/storageService.js';
 import { ReadingScenarioModal } from '../modals/ReadingScenarioModal.js';
 
 interface ReadingViewProps {
   onBackToMenu: () => void;
   initialTopic?: string;
+  initialSavedContent?: ReadingContent | null;
+  speechRate?: number;
+  onChangeSpeed?: (rate: number) => void;
 }
 
 export const ReadingView: React.FC<ReadingViewProps> = ({
   onBackToMenu,
   initialTopic = 'La cultura del té chino y la hospitalidad',
+  initialSavedContent = null,
+  speechRate: externalSpeechRate,
+  onChangeSpeed,
 }) => {
   // Reading content & scenario modal
-  const [content, setContent] = useState<ReadingContent | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [content, setContent] = useState<ReadingContent | null>(initialSavedContent);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialSavedContent);
   const [error, setError] = useState<string | null>(null);
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState<boolean>(false);
 
@@ -65,10 +78,21 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   const [showSentencesAccordion, setShowSentencesAccordion] = useState<boolean>(false);
 
   // TTS audio playback
-  const [speechRate, setSpeechRate] = useState<number>(1.0);
+  const [localSpeechRate, setLocalSpeechRate] = useState<number>(externalSpeechRate ?? 1.0);
+  const speechRate = externalSpeechRate ?? localSpeechRate;
+
+  const handleSpeedChange = (newRate: number) => {
+    setLocalSpeechRate(newRate);
+    setGlobalPlaybackRate(newRate);
+    onChangeSpeed?.(newRate);
+  };
+
+  const [savedReadingNotice, setSavedReadingNotice] = useState(false);
+  const [savedVocabMap, setSavedVocabMap] = useState<Record<string, boolean>>({});
   const [activeSentenceId, setActiveSentenceId] = useState<string | null>(null);
   const [isPlayingFullText, setIsPlayingFullText] = useState<boolean>(false);
   const cancelTtsRef = useRef<(() => void) | null>(null);
+
 
   // ==========================================
   // READING ALOUD (Lectura en Voz Alta) STATE
@@ -189,13 +213,18 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   };
 
   useEffect(() => {
-    fetchReading(initialTopic);
+    if (initialSavedContent) {
+      setContent(initialSavedContent);
+      setIsLoading(false);
+    } else {
+      fetchReading(initialTopic);
+    }
     return () => {
       stopPlayback();
       cancelAloudRecording();
       cancelComprehensionRecording();
     };
-  }, []);
+  }, [initialSavedContent]);
 
   // Text string references
   const fullText = useMemo(() => {
@@ -271,7 +300,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   };
 
   // =======================================================
-  // READING ALOUD RECORDING LOGIC (Continuous, non-cutting)
+  // READING ALOUD RECORDING LOGIC (Mobile & Desktop safe)
   // =======================================================
   const startReadingAloudRecording = () => {
     stopPlayback();
@@ -295,7 +324,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       recognition.lang = 'zh-CN';
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.continuous = true; // DO NOT stop on brief silence!
+      recognition.continuous = !isMobileBrowser();
 
       aloudIsRecordingRef.current = true;
       aloudIsFinalizedRef.current = false;
@@ -314,20 +343,29 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       recognition.onresult = (event: any) => {
         let currentSessionTranscript = '';
         for (let i = 0; i < event.results.length; ++i) {
-          currentSessionTranscript += event.results[i][0].transcript;
+          const seg = (event.results[i][0]?.transcript || '').trim();
+          if (!seg) continue;
+          if (currentSessionTranscript && seg.startsWith(currentSessionTranscript)) {
+            currentSessionTranscript = seg;
+          } else if (currentSessionTranscript && currentSessionTranscript.endsWith(seg)) {
+            // Already included
+          } else {
+            currentSessionTranscript += seg;
+          }
         }
 
         const prefix = aloudPrevSessionTranscriptRef.current;
-        const full = prefix 
-          ? `${prefix} ${currentSessionTranscript}`.trim() 
-          : currentSessionTranscript.trim();
+        let full = currentSessionTranscript.trim();
+        if (prefix && !full.startsWith(prefix)) {
+          full = `${prefix} ${full}`.trim();
+        }
 
         aloudTranscriptRef.current = full;
         setLiveAloudTranscript(full);
       };
 
       recognition.onerror = (event: any) => {
-        if (event.error === 'no-speech') return; // Ignore silent gaps
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
         if (event.error === 'not-allowed') {
           cancelAloudRecording();
           setAloudError('Permiso de micrófono denegado. Habilita el acceso en tu navegador.');
@@ -335,7 +373,6 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       };
 
       recognition.onend = () => {
-        // Auto-restart seamlessly if browser timed out on silent pauses while user is still reading
         if (aloudIsRecordingRef.current && !aloudIsFinalizedRef.current) {
           aloudPrevSessionTranscriptRef.current = aloudTranscriptRef.current;
           try {
@@ -388,6 +425,8 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
     }
 
     const durationSeconds = Math.max(1.0, (Date.now() - aloudRecordStartTimeRef.current) / 1000);
+    // Allow mobile browser 260ms to flush the final SpeechRecognition onresult buffer
+    await new Promise((r) => setTimeout(r, 260));
     const finalTranscript = aloudTranscriptRef.current.trim();
 
     if (!finalTranscript) {
@@ -406,6 +445,16 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       });
 
       setAloudEvaluation(evaluation);
+      if (content) {
+        savePracticeResultToCloud({
+          mode: 'reading',
+          title: `${content.title_translation} (${content.title_hanzi})`,
+          score: evaluation.score,
+          passed: evaluation.passed,
+          hskLevel: content.level,
+          details: 'Evaluación de lectura en voz alta',
+        });
+      }
     } catch (err: any) {
       console.error('Evaluation aloud error:', err);
       setAloudError('Hubo un error al evaluar tu lectura con la IA. Inténtalo de nuevo.');
@@ -442,7 +491,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       recognition.lang = langCode;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.continuous = true;
+      recognition.continuous = !isMobileBrowser();
 
       compIsRecordingRef.current = true;
       compIsFinalizedRef.current = false;
@@ -456,20 +505,29 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       recognition.onresult = (event: any) => {
         let currentSessionTranscript = '';
         for (let i = 0; i < event.results.length; ++i) {
-          currentSessionTranscript += event.results[i][0].transcript;
+          const seg = (event.results[i][0]?.transcript || '').trim();
+          if (!seg) continue;
+          if (currentSessionTranscript && seg.startsWith(currentSessionTranscript)) {
+            currentSessionTranscript = seg;
+          } else if (currentSessionTranscript && currentSessionTranscript.endsWith(seg)) {
+            // Already included
+          } else {
+            currentSessionTranscript += `${currentSessionTranscript ? ' ' : ''}${seg}`;
+          }
         }
 
         const prefix = compPrevSessionTranscriptRef.current;
-        const full = prefix 
-          ? `${prefix} ${currentSessionTranscript}`.trim() 
-          : currentSessionTranscript.trim();
+        let full = currentSessionTranscript.trim();
+        if (prefix && !full.startsWith(prefix)) {
+          full = `${prefix} ${full}`.trim();
+        }
 
         compTranscriptRef.current = full;
         setLiveComprehensionTranscript(full);
       };
 
       recognition.onerror = (event: any) => {
-        if (event.error === 'no-speech') return;
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
         if (event.error === 'not-allowed') {
           cancelComprehensionRecording();
           setComprehensionError('Permiso de micrófono denegado para responder.');
@@ -528,6 +586,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       compRecognitionRef.current = null;
     }
 
+    await new Promise((r) => setTimeout(r, 260));
     const finalTranscript = compTranscriptRef.current.trim();
     if (!finalTranscript) {
       setComprehensionError('No se detectó audio con tu respuesta. Intenta hablar más fuerte o cerca del micrófono.');
@@ -536,6 +595,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
 
     setEvaluatingQuestionId(question.id);
     setComprehensionError(null);
+
 
     try {
       const evaluation = await evaluateReadingComprehension({
@@ -567,7 +627,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   // ------------------------------------------
   // Global Session Score Calculation
   // ------------------------------------------
-  const answeredQuestionsList = Object.values(comprehensionAnswers);
+  const answeredQuestionsList = Object.values(comprehensionAnswers) as ReadingComprehensionAnswer[];
   const totalQuestionsCount = content?.comprehension_questions?.length || 0;
   const correctQuestionsCount = answeredQuestionsList.filter((a) => a.is_correct).length;
   
@@ -673,9 +733,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
             {[0.75, 1.0, 1.25].map((speed) => (
               <button
                 key={speed}
-                onClick={() => setSpeechRate(speed)}
+                onClick={() => handleSpeedChange(speed)}
                 className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  speechRate === speed
+                  Math.abs(speechRate - speed) < 0.02
                     ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
@@ -684,6 +744,36 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
               </button>
             ))}
           </div>
+
+          {content && (
+            <button
+              onClick={async () => {
+                await saveExerciseToCloud({
+                  type: 'reading',
+                  title: content.title_translation || content.topic,
+                  chineseTitle: content.title_hanzi,
+                  level: content.level,
+                  payload: content,
+                });
+                setSavedReadingNotice(true);
+                setTimeout(() => setSavedReadingNotice(false), 2000);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-xs font-bold transition-all cursor-pointer"
+              title="Guardar este texto de lectura en mi Cuaderno"
+            >
+              {savedReadingNotice ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>¡Guardado en Cuaderno!</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Guardar en Cuaderno</span>
+                </>
+              )}
+            </button>
+          )}
 
         </div>
       </div>
@@ -791,7 +881,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                   ) : (
                     <>
                       <Volume2 className="w-4 h-4 text-amber-400" />
-                      <span>Escuchar audio IA</span>
+                      <span>Escuchar audio IA ({speechRate}x)</span>
                     </>
                   )}
                 </button>
@@ -820,7 +910,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
           {/* ======================================================== */}
           {/* SECTION 1: COMPLETE TEXT & READING ALOUD ORAL PRACTICE */}
           {/* ======================================================== */}
-          <div className="p-6 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl space-y-6">
+          <div className="p-4 sm:p-6 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl space-y-6">
             
             <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -839,16 +929,16 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
             </div>
 
             {/* Full text narrative passage */}
-            <div className="p-5 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-4">
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-4">
               {showHanzi ? (
                 <HanziWithPinyin
                   text={fullText}
                   showPinyin={showPinyin}
                   onWordClick={(char) => playChineseWord(char)}
-                  className="text-2xl sm:text-3xl leading-loose font-normal text-slate-100 select-text"
+                  className="text-xl sm:text-3xl leading-loose font-normal text-slate-100 select-text"
                 />
               ) : (
-                <div className="text-lg sm:text-xl font-mono text-amber-300 leading-relaxed">
+                <div className="text-base sm:text-xl font-mono text-amber-300 leading-relaxed">
                   {content.sentences.map((s) => s.pinyin).join(' ')}
                 </div>
               )}
@@ -863,7 +953,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
             {/* ======================================================== */}
             {/* READING ALOUD RECORDING & EVALUATION BOX */}
             {/* ======================================================== */}
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-950 to-amber-950/20 border border-amber-500/20 space-y-4">
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-950 to-amber-950/20 border border-amber-500/20 space-y-4">
               
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -872,7 +962,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                     Evaluación de Lectura en Voz Alta
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Grábate leyendo el texto completo. La IA evaluará tu precisión fonética, fluidez y velocidad de lectura.
+                    Grábate leyendo el texto completo. Se evalúa con tolerancia inteligente a homófonos Pinyin.
                   </p>
                 </div>
 
@@ -935,7 +1025,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
               {isEvaluatingAloud && (
                 <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 flex items-center justify-center gap-3 text-xs text-amber-300 animate-fadeIn">
                   <div className="w-5 h-5 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
-                  <span>La IA está analizando tu fluidez, precisión de pronunciación y ritmo de lectura...</span>
+                  <span>Analizando tu fluidez, fonética Pinyin y homófonos...</span>
                 </div>
               )}
 
@@ -979,6 +1069,22 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Homophone Auto-Correction Notice */}
+                  {aloudEvaluation.homophoneCorrections && aloudEvaluation.homophoneCorrections.length > 0 && (
+                    <div className="p-3 rounded-xl bg-sky-950/30 border border-sky-500/40 text-xs text-sky-200 flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Auto-corrección fonética de homófonos STT:</strong> Se validaron como correctos{' '}
+                        {aloudEvaluation.homophoneCorrections.slice(0, 6).map((h, idx) => (
+                          <span key={idx} className="inline-block font-mono bg-sky-900/50 px-1.5 py-0.2 rounded mx-0.5">
+                            "{h.heard}" → "{h.correctedTo}" ({h.pinyin})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
 
                   {/* Mistakes / Omissions */}
                   {aloudEvaluation.mistakes && aloudEvaluation.mistakes.length > 0 && (
@@ -1442,27 +1548,54 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                       Vocabulario Clave del Texto
                     </h5>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      {content.vocabulary.map((vocab, i) => (
-                        <div
-                          key={`${i}-${vocab.word}`}
-                          onClick={() => playChineseWord(vocab.word)}
-                          className="group p-3 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-amber-500/40 transition-all cursor-pointer flex items-center justify-between"
-                        >
-                          <div>
-                            <div className="text-base font-bold text-slate-200 group-hover:text-amber-300 transition-colors">
-                              {vocab.word}
+                      {content.vocabulary.map((vocab, i) => {
+                        const isSaved = savedVocabMap[vocab.word];
+                        return (
+                          <div
+                            key={`${i}-${vocab.word}`}
+                            onClick={() => playChineseWord(vocab.word)}
+                            className="group p-3 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-amber-500/40 transition-all cursor-pointer flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <div className="text-base font-bold text-slate-200 group-hover:text-amber-300 transition-colors">
+                                {vocab.word}
+                              </div>
+                              <div className="text-xs text-amber-400 font-mono">
+                                {vocab.pinyin}
+                              </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5">
+                                {vocab.meaning}
+                              </div>
                             </div>
-                            <div className="text-xs text-amber-400 font-mono">
-                              {vocab.pinyin}
-                            </div>
-                            <div className="text-[11px] text-slate-400 mt-0.5">
-                              {vocab.meaning}
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await saveVocabularyToCloud({
+                                    hanzi: vocab.word,
+                                    pinyin: vocab.pinyin,
+                                    meaning: vocab.meaning,
+                                    sourceMode: `Lectura: ${content.title_translation}`,
+                                  });
+                                  setSavedVocabMap((prev) => ({ ...prev, [vocab.word]: true }));
+                                }}
+                                className="p-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 cursor-pointer"
+                                title="Guardar palabra en Mi Cuaderno / Google Sheets"
+                              >
+                                {isSaved ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                ) : (
+                                  <BookmarkPlus className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                              <Volume2 className="w-4 h-4 text-slate-600 group-hover:text-amber-400 transition-colors" />
                             </div>
                           </div>
-                          <Volume2 className="w-4 h-4 text-slate-600 group-hover:text-amber-400 transition-colors" />
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
+
                   </div>
                 )}
 

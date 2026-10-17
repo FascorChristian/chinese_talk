@@ -5,7 +5,10 @@ import {
   Scenario, 
   SuggestedReply,
   AppMode,
-  DialogueObjective
+  DialogueObjective,
+  SavedExercise,
+  ShadowingDialogue,
+  ReadingContent
 } from './types/index.js';
 import { SCENARIOS } from './data/scenarios.js';
 import { Header } from './components/layout/Header.js';
@@ -13,19 +16,20 @@ import { MainMenuView } from './components/views/MainMenuView.js';
 import { ReadingView } from './components/views/ReadingView.js';
 import { ShadowingView } from './components/views/ShadowingView.js';
 import { DiagnosticView } from './components/views/DiagnosticView.js';
+import { NotebookDriveView } from './components/views/NotebookDriveView.js';
 import { AvatarVisualizer } from './components/conversation/AvatarVisualizer.js';
 import { ChatMessageBubble } from './components/conversation/ChatMessageBubble.js';
 import { InteractionBar } from './components/conversation/InteractionBar.js';
 import { DialogueObjectivesHUD } from './components/conversation/DialogueObjectivesHUD.js';
 import { DialogueCompletionModal } from './components/modals/DialogueCompletionModal.js';
-import { HintsModal } from './components/modals/HintsModal.js';
 import { CustomScenarioModal } from './components/modals/CustomScenarioModal.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useAudioMeter } from './hooks/useAudioMeter.js';
 import { sendMessageToTutor } from './services/api.js';
+import { saveExerciseToCloud, savePracticeResultToCloud } from './services/storageService.js';
 import { initVoices, isSpeechRecognitionSupported } from './utils/speechUtils.js';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, BookmarkCheck, CheckCircle2 } from 'lucide-react';
 
 export default function App() {
   // Navigation mode
@@ -35,6 +39,11 @@ export default function App() {
   const [currentScenario, setCurrentScenario] = useState<Scenario>(SCENARIOS[0]);
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
 
+  // Saved Exercise pre-loaders (for opening exercises from Notebook/Drive with 0 API calls)
+  const [savedShadowingToLoad, setSavedShadowingToLoad] = useState<ShadowingDialogue | null>(null);
+  const [savedReadingToLoad, setSavedReadingToLoad] = useState<ReadingContent | null>(null);
+  const [scenarioSavedToast, setScenarioSavedToast] = useState(false);
+
   // Display Settings
   const [speechRate, setSpeechRate] = useState<number>(1.0);
   const [showPinyin, setShowPinyin] = useState<boolean>(true);
@@ -43,9 +52,6 @@ export default function App() {
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [tutorState, setTutorState] = useState<TutorState>('idle');
-
-  // Hints Modal state
-  const [isHintsModalOpen, setIsHintsModalOpen] = useState(false);
   const [currentHints, setCurrentHints] = useState<SuggestedReply[]>([]);
 
   // Dialogue Objectives & Timer State
@@ -100,7 +106,7 @@ export default function App() {
     } else if (tutorState === 'speaking') {
       setTutorState('idle');
     }
-  }, [isPlaying]);
+  }, [isPlaying, tutorState]);
 
   // Handle playing audio
   const handlePlayAudio = useCallback((text: string) => {
@@ -175,14 +181,14 @@ export default function App() {
       }
 
       // Update completed objectives checklist
+      let updatedObjectives = objectives;
       if (Array.isArray(data.completed_objective_ids) && data.completed_objective_ids.length > 0) {
-        setObjectives((prev) =>
-          prev.map((obj) =>
-            data.completed_objective_ids!.includes(obj.id)
-              ? { ...obj, completed: true }
-              : obj
-          )
+        updatedObjectives = objectives.map((obj) =>
+          data.completed_objective_ids!.includes(obj.id)
+            ? { ...obj, completed: true }
+            : obj
         );
+        setObjectives(updatedObjectives);
       }
 
       // Handle dialogue finish trigger
@@ -191,6 +197,19 @@ export default function App() {
         if (data.final_feedback) {
           setFinalFeedback(data.final_feedback);
         }
+        // Save conversation completion result to Cloud Store / Google Sheets
+        const completedCount = updatedObjectives.filter((o) => o.completed).length;
+        const scorePct = updatedObjectives.length > 0
+          ? Math.round((completedCount / updatedObjectives.length) * 100)
+          : 100;
+        savePracticeResultToCloud({
+          mode: 'conversation',
+          title: currentScenario.title,
+          score: scorePct,
+          passed: scorePct >= 60,
+          details: data.final_feedback || `Diálogo completado (${completedCount}/${updatedObjectives.length} objetivos).`,
+        }).catch(() => {});
+
         setTimeout(() => {
           setIsCompletionModalOpen(true);
         }, 3000);
@@ -209,16 +228,17 @@ export default function App() {
   // Speech Recognition Hook (Continuous mode with 100% manual user control)
   const {
     isRecording,
+    transcript,
     recordingSeconds,
     error: speechError,
     startRecording: startVoiceRecording,
     stopRecording: stopVoiceRecording,
   } = useSpeechRecognition({
     lang: 'zh-CN',
-    onTranscriptFinalized: (transcript) => {
+    onTranscriptFinalized: (finalText) => {
       stopAudioMeter();
-      if (transcript) {
-        handleSendMessage(transcript);
+      if (finalText) {
+        handleSendMessage(finalText);
       } else {
         setTutorState('idle');
       }
@@ -229,12 +249,12 @@ export default function App() {
     }
   });
 
-  // Start 1-Click / Push-To-Talk Voice Recording
-  const startRecording = async () => {
+  // Start 1-Click Voice Recording (synchronous first call for mobile Safari/Chrome gesture safety)
+  const startRecording = () => {
     stopAudio();
     setTutorState('listening');
-    await startAudioMeter();
     startVoiceRecording();
+    startAudioMeter().catch(() => {});
   };
 
   // Stop Voice Recording and Submit
@@ -299,6 +319,37 @@ export default function App() {
     initScenario(newScenario, true);
   };
 
+  // Save current conversation scenario to Cloud / Drive
+  const handleSaveCurrentScenario = async () => {
+    await saveExerciseToCloud({
+      type: 'conversation',
+      title: currentScenario.title,
+      chineseTitle: currentScenario.chineseTitle,
+      level: 'HSK 1-3',
+      payload: currentScenario,
+    });
+    setScenarioSavedToast(true);
+    setTimeout(() => setScenarioSavedToast(false), 2500);
+  };
+
+  // Load any saved exercise from NotebookDriveView without spending Gemini API calls
+  const handleLoadSavedExercise = (exercise: SavedExercise) => {
+    stopAudio();
+    stopAudioMeter();
+    if (exercise.type === 'conversation') {
+      const scenarioData = exercise.payload as Scenario;
+      setCurrentScenario(scenarioData);
+      setCurrentMode('conversation');
+      initScenario(scenarioData, true);
+    } else if (exercise.type === 'shadowing') {
+      setSavedShadowingToLoad(exercise.payload as ShadowingDialogue);
+      setCurrentMode('shadowing');
+    } else if (exercise.type === 'reading') {
+      setSavedReadingToLoad(exercise.payload as ReadingContent);
+      setCurrentMode('reading');
+    }
+  };
+
   // Reset conversation
   const handleResetChat = () => {
     initScenario(currentScenario, true);
@@ -311,6 +362,8 @@ export default function App() {
     if (mode === 'conversation') {
       setIsScenarioModalOpen(true);
     } else {
+      if (mode !== 'shadowing') setSavedShadowingToLoad(null);
+      if (mode !== 'reading') setSavedReadingToLoad(null);
       setCurrentMode(mode);
     }
   };
@@ -322,7 +375,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-x-hidden">
       
       {/* 1. Header with Mode Navigation & Global Controls */}
       <Header
@@ -337,32 +390,64 @@ export default function App() {
         onResetChat={handleResetChat}
         currentMode={currentMode}
         onGoToMenu={handleGoToMenu}
+        onOpenNotebook={() => setCurrentMode('notebook')}
+        onSaveCurrentScenario={currentMode === 'conversation' ? handleSaveCurrentScenario : undefined}
       />
+
+      {/* Toast when scenario saved */}
+      {scenarioSavedToast && (
+        <div className="fixed top-16 right-4 z-50 px-3.5 py-2 rounded-xl bg-emerald-950/95 border border-emerald-500/50 text-emerald-200 text-xs font-semibold flex items-center gap-2 shadow-xl animate-fadeIn">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>Escenario guardado en tu Cuaderno</span>
+        </div>
+      )}
 
       {/* 2. Mode Content Views */}
       {currentMode === 'menu' && (
         <MainMenuView onSelectMode={handleSelectMode} />
       )}
 
+      {currentMode === 'notebook' && (
+        <NotebookDriveView
+          onBackToMenu={handleGoToMenu}
+          onLoadExercise={handleLoadSavedExercise}
+          speechRate={speechRate}
+          onPlayAudio={handlePlayAudio}
+        />
+      )}
+
       {currentMode === 'reading' && (
-        <ReadingView onBackToMenu={handleGoToMenu} />
+        <ReadingView
+          onBackToMenu={handleGoToMenu}
+          speechRate={speechRate}
+          onChangeSpeed={(speed) => setSpeechRate(speed)}
+          initialSavedContent={savedReadingToLoad}
+        />
       )}
 
       {currentMode === 'shadowing' && (
-        <ShadowingView onBackToMenu={handleGoToMenu} />
+        <ShadowingView
+          onBackToMenu={handleGoToMenu}
+          speechRate={speechRate}
+          onChangeSpeed={(speed) => setSpeechRate(speed)}
+          initialSavedDialogue={savedShadowingToLoad}
+        />
       )}
 
       {currentMode === 'diagnostic' && (
-        <DiagnosticView onBackToMenu={handleGoToMenu} />
+        <DiagnosticView
+          onBackToMenu={handleGoToMenu}
+          speechRate={speechRate}
+        />
       )}
 
       {currentMode === 'conversation' && (
         <>
           {/* Main Body: Avatar Visualizer & Conversation Flow */}
-          <main className="flex-1 flex flex-col max-w-4xl w-full mx-auto px-3 sm:px-6 pt-3 pb-6">
+          <main className="flex-1 flex flex-col max-w-4xl w-full mx-auto px-2.5 sm:px-6 pt-2 sm:pt-3 pb-4">
             
             {/* Central Dynamic Avatar & Sound Visualizer */}
-            <div className="py-2 border-b border-slate-800/60 bg-gradient-to-b from-slate-900/30 to-transparent rounded-2xl mb-3">
+            <div className="py-1.5 sm:py-2 border-b border-slate-800/60 bg-gradient-to-b from-slate-900/30 to-transparent rounded-2xl mb-2 sm:mb-3">
               <AvatarVisualizer
                 state={tutorState}
                 audioLevel={audioLevel}
@@ -386,18 +471,25 @@ export default function App() {
             />
 
             {/* Conversation History Area */}
-            <div className="flex-1 overflow-y-auto space-y-4 px-1 pb-4">
-              <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-400">
+            <div className="flex-1 overflow-y-auto space-y-3 sm:space-y-4 px-1 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 sm:p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 text-[11px] sm:text-xs text-slate-400">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                  <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400 flex-shrink-0" />
                   <span>
-                    <strong>Modo 1-Clic:</strong> Haz clic para hablar a tu propio ritmo sin cortes automáticos. Haz clic de nuevo para enviar. Lee las pistas abajo mientras hablas.
+                    <strong>Modo 1-Clic (Tolerante a homófonos):</strong> Pulsa para hablar, pulsa de nuevo para enviar.
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={handleSaveCurrentScenario}
+                    className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <BookmarkCheck className="w-3.5 h-3.5" />
+                    <span>Guardar</span>
+                  </button>
                   <button
                     onClick={() => setIsScenarioModalOpen(true)}
-                    className="text-xs font-semibold text-rose-400 hover:text-rose-300 underline whitespace-nowrap cursor-pointer"
+                    className="text-[11px] font-semibold text-rose-400 hover:text-rose-300 underline whitespace-nowrap cursor-pointer"
                   >
                     Nueva situación IA
                   </button>
@@ -445,6 +537,7 @@ export default function App() {
             hints={currentHints}
             onPlayAudio={handlePlayAudio}
             showPinyin={showPinyin}
+            liveTranscript={transcript}
           />
         </>
       )}

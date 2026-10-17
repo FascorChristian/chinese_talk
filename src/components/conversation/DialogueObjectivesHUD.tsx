@@ -27,7 +27,9 @@ export const DialogueObjectivesHUD: React.FC<DialogueObjectivesHUDProps> = ({
   totalTimeSeconds,
   isCompleted = false,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const [isExpanded, setIsExpanded] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 640 : true
+  );
   const [showStructure, setShowStructure] = useState<boolean>(false);
 
   const completedCount = objectives.filter((o) => o.completed).length;
